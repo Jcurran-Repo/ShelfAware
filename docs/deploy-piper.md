@@ -20,8 +20,10 @@ sentence, same two threads, same pinned cores:
 | Piper `en_US-lessac-medium` | **0.05× real time** | ~0.9 s | 65 MB |
 
 On the demo droplet (DigitalOcean *Regular*, 2 vCPU, no AVX-512 VNNI) Kokoro measured **3.1× real
-time** — an 8.9-second reply cost 28 seconds of silence before a single word. Piper on the same box
-lands near 0.1×.
+time** — an 8.9-second reply cost 28 seconds of silence before a single word. Piper's *medium* voices
+on the same box measure **0.12–0.19×** once the model is loaded (ryan-medium, lessac-medium,
+2026-09-23). ⚠️ Its *high* voices do not: ryan-high measured **0.8–0.95×** there — see
+[voice-bakeoff.md](voice-bakeoff.md#a-worked-example-the-voice-that-nearly-shipped-at-the-line).
 
 ⚠️ **The threshold that matters is 1.0×, not the ratio.** Below it synthesis outruns playback, so a
 reply can start speaking while the rest of it is still being made. Above it, every sentence arrives
@@ -33,7 +35,7 @@ because the alternative a visitor actually experiences is silence.
 
 ## Which box runs which
 
-- **Demo box** — Piper. It is the employer-facing one and it runs on a shared core.
+- **Demo box** — Piper, voice `ryan-medium`. It is the employer-facing one and it runs on a shared core.
 - **Family box** — Kokoro. Real hardware, and the people using it would rather have the better voice.
 
 Both are unpacked by the droplet deploy's `bootstrap` step, so switching is one line in
@@ -44,33 +46,39 @@ Both are unpacked by the droplet deploy's `bootstrap` step, so switching is one 
 The droplet deploy does this for you (`.github/workflows/deploy-droplet.yml`, `bootstrap: true`).
 By hand:
 
+⚠️ **Paste the block whole.** Every step is joined to the next with `&&`, and that is load-bearing:
+`sha256sum -c` on a line of its own prints `FAILED` and returns 1, and a pasted block runs the next line
+anyway — so an archive that failed its check would be unpacked, as root, with the only sign four lines
+back up the scrollback. The deploy's `bootstrap` exits on a mismatch; this has to do the same.
+
 ```bash
 cd /var/lib/shelfaware/models
-curl -fsSL -o piper.tar.bz2 \
-  https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2
-echo "9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e  piper.tar.bz2" | sha256sum -c -
+V=vits-piper-en_US-ryan-medium
 # Unpacked into a staging directory and moved into place only once it is whole -- the same shape the
 # workflow uses, and for the same reason: "is the directory there" is the check everything else makes,
 # so a half-extracted one (a disk that filled, a connection that dropped) would read as unpacked
 # forever and the app would refuse to boot naming files that were never going to arrive.
-rm -rf .staging && mkdir .staging
-tar xjf piper.tar.bz2 -C .staging --no-same-owner --no-same-permissions
-mv .staging/vits-piper-en_US-lessac-medium .
-rm -rf .staging piper.tar.bz2
-chown -R root:root vits-piper-en_US-lessac-medium
-chmod -R a+rX vits-piper-en_US-lessac-medium
+curl -fsSL --proto '=https' -o piper.tar.bz2 \
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$V.tar.bz2" \
+  && { echo "c546af78b6395b4e7c4ce1ed899438b64426a362f5d4ec5fecd090ded9ad7505  piper.tar.bz2" | sha256sum -c - \
+       || { rm -f piper.tar.bz2; false; }; } \
+  && rm -rf .staging && mkdir .staging \
+  && tar xjf piper.tar.bz2 -C .staging --no-same-owner --no-same-permissions \
+  && mv ".staging/$V" . \
+  && rm -rf .staging piper.tar.bz2 \
+  && chown -R root:root "$V" && chmod -R a+rX "$V"
 ```
 
-The checksum is the archive as measured on 2026-09-21. It sits on a mutable release tag, so "the bytes
-we measured" and "whatever that URL serves today" are different promises — which is the whole reason
-the line is there. `tar` shells out to `bzip2`, which a minimal Ubuntu image does not ship; the deploy
+The checksum is the archive as measured on 2026-09-23, computed from the download on the droplet
+itself. It sits on a mutable release tag, so "the bytes we measured" and "whatever that URL serves
+today" are different promises — which is the whole reason the line is there. `tar` shells out to `bzip2`, which a minimal Ubuntu image does not ship; the deploy
 installs it first.
 
 A complete directory holds exactly three things the app cares about:
 
 ```
-vits-piper-en_US-lessac-medium/
-  en_US-lessac-medium.onnx     # the weights, named after the voice
+vits-piper-en_US-ryan-medium/
+  en_US-ryan-medium.onnx       # the weights, named after the voice -- and found by the directory's name
   tokens.txt
   espeak-ng-data/              # a DIRECTORY -- this is what lets "no system espeak-ng" hold
 ```
@@ -82,12 +90,18 @@ descriptor has three paths where Kokoro's has four.
 
 ```bash
 dotnet run --project tools/VoiceCheck -- piper \
-  /var/lib/shelfaware/models/vits-piper-en_US-lessac-medium /tmp/piper-check.wav
+  /var/lib/shelfaware/models/vits-piper-en_US-ryan-medium /tmp/piper-check.wav
 ```
 
 It loads the model through the app's own engine, says a sentence with numbers and a unit abbreviation
-in it, writes a WAV, and prints **the rate against real time measured on that box** — which is the
-number that decides whether streaming can keep up there. Play the WAV.
+in it, writes a WAV, and prints **the rate against real time measured on that box** — twice: the first
+read, which also loads the model, and a second once it is loaded. ⚠️ **The second is the one to hold
+against 1.0×**; on a clip this short the first is mostly load, which is how ryan-high once looked like
+a modest step on a desktop. Play the WAV.
+
+That line wants an SDK and a checkout, and the droplet has neither: publish the tool self-contained and
+copy it over, as [deploy-kokoro.md](deploy-kokoro.md) step 3 shows. That is how every droplet figure on
+this page was measured.
 
 ⚠️ Run this **before** step 3, not after. sherpa-onnx answers a missing or unreadable model file by
 printing one line to stderr and killing the process with a SIGSEGV: no managed exception, nothing to
@@ -102,30 +116,37 @@ back silently:
 
 ```
 Speech__Provider=Piper
-Speech__Piper__ModelDirectory=/var/lib/shelfaware/models/vits-piper-en_US-lessac-medium
+Speech__Piper__ModelDirectory=/var/lib/shelfaware/models/vits-piper-en_US-ryan-medium
 ```
 
 Then `systemctl restart shelfaware` and check `/healthz`.
 
-`Speech__Piper__ModelFile` defaults to `en_US-lessac-medium.onnx`. Any other voice needs it set,
-because Piper names its weights after the voice and there is no name that is right for every archive.
+**That one line is the whole voice.** Piper names its weights after the voice, and the app reads that
+name off the directory: `vits-piper-<voice>` holds `<voice>.onnx`, and the quantized `-int8`/`-fp16`
+builds keep the plain name. `Speech__Piper__ModelFile` is only for an archive that names its weights
+some other way — set, it wins. A directory the app cannot read a name from is refused at boot naming
+that setting, and so is a worked-out name that is not on disk; neither reaches native code.
+
+This used to take two lines, with the second defaulting to one voice's file. Changing the default voice
+would then have stranded every box whose env named the old directory: the deploy lands, the new default
+names a file that directory does not hold, and the app will not start.
 
 ## Choosing a different voice
 
-`en_US-lessac-medium` is the default because it is the steadiest of the American English voices at
-medium quality. Two alternatives worth knowing:
+`en_US-ryan-medium` is the demo box's voice because it was picked **by ear** in the bake-off
+([voice-bakeoff.md](voice-bakeoff.md)) and then **measured on the droplet** at 0.12–0.14× once loaded —
+level with `lessac-medium`, the voice it replaced, which stays unpacked so going back is the one line
+above. The bake-off is the way to choose another; two things worth knowing first:
 
 - **`vits-piper-en_US-libritts_r-medium`** — one 79 MB archive holding **904 speakers**, selected with
-  `Speech__Piper__SpeakerId`. Same speed. Worth it if you want a particular character; it needs
-  `Speech__Piper__ModelFile=en_US-libritts_r-medium.onnx`, and `VoiceCheck` takes the matching
-  `--model-file en_US-libritts_r-medium.onnx`. The tool refuses a directory whose voice does not match
-  the setting rather than auditioning one the app would then refuse to boot on, and tells you the line
-  to add.
-- **`-high` variants** of either — better audio, proportionally slower. Measure with `VoiceCheck` on
-  the box that will run it before believing a number from anywhere else, including this table.
+  `Speech__Piper__SpeakerId`. Medium-model speed. Worth it if you want a particular character; like any
+  Piper archive it needs only its directory named.
+- ⚠️ **`-high` variants are not "proportionally slower" on the droplet — they are at the line.**
+  ryan-high measured 0.8–0.95× there against ryan-medium's 0.12–0.14×. Measure with `VoiceCheck` on the
+  box that will run it before believing a number from anywhere else, including this page.
 
-⚠️ **Changing the voice retires the cache.** `SpeakerId` and `ModelFile` are both part of the clip
-fingerprint, deliberately: a clip voiced one way must never be served for a key that now means
+⚠️ **Changing the voice retires the cache.** The archive's name, `ModelFile` (as resolved — the
+worked-out name, not the blank setting) and `SpeakerId` are all part of the clip fingerprint, deliberately: a clip voiced one way must never be served for a key that now means
 another. Old clips are not deleted, they simply stop being found, and the cache trims them in its own
 time.
 

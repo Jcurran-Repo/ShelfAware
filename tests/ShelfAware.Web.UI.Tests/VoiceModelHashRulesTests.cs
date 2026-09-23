@@ -3,9 +3,10 @@ using System.Text.RegularExpressions;
 namespace ShelfAware.Web.UI.Tests;
 
 /// <summary>
-/// The recorded sha256 of every voice model archive is written in two places — <c>sha_for()</c> in
-/// <c>.github/workflows/voice-bakeoff.yml</c>, and the copy-paste instructions in
-/// <c>docs/voice-bakeoff.md</c> — and this is what stops them drifting apart.
+/// The recorded sha256 of a voice model archive is written in more than one place — <c>sha_for()</c>
+/// in <c>.github/workflows/voice-bakeoff.yml</c>, the copy-paste instructions in
+/// <c>docs/voice-bakeoff.md</c> and <c>docs/deploy-piper.md</c>, and the deploy's own bootstrap — and
+/// this is what stops them drifting apart.
 ///
 /// <para>⚠️ Duplicated deliberately, and only because this test exists. The doc's copy is the one a
 /// person runs AS ROOT on a box holding real households' receipts, so it has to be complete enough to
@@ -30,7 +31,8 @@ public class VoiceModelHashRulesTests
         // Reach guards, separate from the finding: a regex that stopped matching, or a file that moved,
         // would otherwise make this pass by scanning nothing — the exact way a rule ships having tested
         // zero of what it claims to cover (docs/journal/build-log.md, the mutation gate that ran no
-        // mutants). Ten archives plus a vocoder are recorded; the docs paste three of them.
+        // mutants). The floors are what existed when they were written -- ten archives plus a vocoder
+        // recorded, three of them pasted in the docs -- and the lineup only grows.
         Assert.True(recorded.Count >= 11,
             $"Only {recorded.Count} sha256 value(s) found in voice-bakeoff.yml — the scan is broken, not the workflow.");
         Assert.True(documented.Count >= 3,
@@ -44,6 +46,47 @@ public class VoiceModelHashRulesTests
             + "holding real data — fix them together:" + Environment.NewLine
             + string.Join(Environment.NewLine, stale));
     }
+
+    /// <summary>
+    /// The droplet deploy's <c>bootstrap</c> fetches the demo box's voice with a hash of its own, and
+    /// <c>docs/deploy-piper.md</c> pastes it for the by-hand route — two more copies of facts
+    /// <c>sha_for()</c> already records. The bootstrap's copy is the one that runs as root on every
+    /// deploy, so it is held to the workflow by ARCHIVE: a fetch of an archive <c>sha_for()</c> knows must
+    /// name the hash <c>sha_for()</c> gives it. (The bootstrap also fetches the ear's model, which is no
+    /// voice and not the bake-off's to record — it drops out because sha_for() has no row for it.)
+    /// </summary>
+    [Fact]
+    public void Every_voice_the_deploy_fetches_carries_the_hash_the_bake_off_records()
+    {
+        var recorded = RecordedByArchive(File.ReadAllText(RepoFile(Path.Combine(".github", "workflows", "voice-bakeoff.yml"))));
+        var fetched = FetchedByArchive(File.ReadAllText(RepoFile(Path.Combine(".github", "workflows", "deploy-droplet.yml"))));
+
+        // Reach guards: the bootstrap fetches three voices' worth of archives (two Piper, one Kokoro),
+        // and a pattern that stopped matching would otherwise pass having compared nothing.
+        var shared = fetched.Keys.Intersect(recorded.Keys, StringComparer.Ordinal).ToList();
+        Assert.True(shared.Count >= 3,
+            $"Only {shared.Count} bootstrap fetch(es) matched an archive sha_for() records — the scan is broken, not the workflows.");
+
+        var disagreeing = shared.Where(a => fetched[a] != recorded[a]).ToList();
+        Assert.True(disagreeing.Count == 0,
+            "deploy-droplet.yml fetches an archive under a different sha256 than voice-bakeoff.yml records "
+            + "for it — one has been edited and the other has not:" + Environment.NewLine
+            + string.Join(Environment.NewLine, disagreeing));
+
+        var documented = HashesIn(RepoFile(Path.Combine("docs", "deploy-piper.md")));
+        Assert.NotEmpty(documented);
+        Assert.Empty(documented.Except(recorded.Values));
+    }
+
+    /// <summary><c>sha_for()</c>'s arms: <c>archive) echo &lt;sha&gt;;;</c>.</summary>
+    private static Dictionary<string, string> RecordedByArchive(string workflow) =>
+        Regex.Matches(workflow, @"^\s*([\w.\-]+)\)\s+echo\s+([0-9a-f]{64});;", RegexOptions.Multiline)
+            .ToDictionary(m => m.Groups[1].Value, m => m.Groups[2].Value, StringComparer.Ordinal);
+
+    /// <summary>The bootstrap's calls: <c>fetch &lt;archive&gt; \</c>, then the sha on the next line.</summary>
+    private static Dictionary<string, string> FetchedByArchive(string workflow) =>
+        Regex.Matches(workflow, @"^\s*fetch\s+([\w.\-]+)\s*\\\s*\r?\n\s*([0-9a-f]{64})", RegexOptions.Multiline)
+            .ToDictionary(m => m.Groups[1].Value, m => m.Groups[2].Value, StringComparer.Ordinal);
 
     private static IReadOnlyCollection<string> HashesIn(string path) =>
         [.. Sha.Matches(File.ReadAllText(path)).Select(m => m.Value).Distinct(StringComparer.Ordinal)];

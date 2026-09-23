@@ -168,6 +168,15 @@ jobs:
           # The fast mouth. Kokoro is warmer and this box cannot afford it: measured at 3.1x real time
           # here against Piper's 0.05x on hardware with the int8 instructions Kokoro's quantization
           # wants. Both are unpacked, so Speech:Provider can be moved either way without a deploy.
+          #
+          # Ryan-medium is this box's voice, picked by ear in the bake-off (docs/voice-bakeoff.md) and
+          # measured HERE at 0.12-0.14x once loaded. ⚠️ Medium, not high: Ryan-high measured 0.8-0.95x
+          # on this box -- five times the cost, right at the 1.0x line, on two cores the website shares.
+          # Lessac stays unpacked because it was the voice before, so going back is the one env line
+          # that names the directory -- the weights' name is read off it (PiperSpeechOptions).
+          fetch vits-piper-en_US-ryan-medium \
+            c546af78b6395b4e7c4ce1ed899438b64426a362f5d4ec5fecd090ded9ad7505 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ryan-medium.tar.bz2
           fetch vits-piper-en_US-lessac-medium \
             9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2

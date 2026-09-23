@@ -45,7 +45,15 @@ the built-in reader.
     Piper 0.05×. ⚠️ The threshold that matters is **1.0×**, because below it synthesis outruns playback
     and a reply can start speaking before it is finished being made. The demo droplet measured Kokoro at
     **3.1×** — 28 seconds of silence for a 9-second reply — which is why that box runs Piper and the
-    family box, on real hardware, keeps Kokoro.
+    family box, on real hardware, keeps Kokoro. ⚠️ A Piper *medium* voice (`ryan-medium`, 0.12–0.14×
+    there): the *high* ones measured 0.8–0.95× on the droplet, which a desktop run had hidden by timing
+    the model load along with the synthesis. `docs/voice-bakeoff.md`, *A worked example*.
+  - **A Piper voice is one setting — its directory.** Piper names its weights after the voice, and the
+    app reads the name off the archive (`vits-piper-<voice>` → `<voice>.onnx`) rather than defaulting
+    to one voice's file, so a new default voice cannot strand a box whose env names the old directory.
+    One resolved `ModelFile` is what the file check, the load and the cache fingerprint all read
+    (`SherpaTtsOptions.ModelFile`); the raw setting binds to its own property because the config binder
+    writes a getter's value back and would otherwise make every unset name look set.
   - **The ear is far cheaper than the mouth.** Measured on one core: Kokoro needs ~17 s to *say* a 7.4 s
     sentence; Moonshine needs 0.7 s to *hear* it. If a small box feels slow, it is synthesis.
   - **The browser sends 16 kHz mono PCM** (`wwwroot/js/pcm.js`, imported by all three capture paths),

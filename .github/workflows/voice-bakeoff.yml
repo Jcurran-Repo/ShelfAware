@@ -9,7 +9,7 @@ name: Voice bake-off
 # against the runner's fraction of that. Use this run to pick a voice by EAR, then confirm the winner is
 # under 1.0x on the box itself with tools/VoiceCheck. See docs/voice-bakeoff.md.
 #
-# Manual only. It downloads ~980 MB of models and has no business running on a push.
+# Manual only. It downloads about a gigabyte of models and has no business running on a push.
 
 on:
   workflow_dispatch:
@@ -26,8 +26,8 @@ jobs:
   bakeoff:
     name: Render every voice
     runs-on: ubuntu-latest
-    # ~980 MB of models and fourteen syntheses. Bounded like the mutation workflows are, so a stall
-    # cannot hold a runner for six hours.
+    # About a gigabyte of models and two syntheses per lineup row. Bounded like the mutation workflows
+    # are, so a stall cannot hold a runner for six hours.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -67,6 +67,7 @@ jobs:
               vits-piper-en_US-lessac-medium) echo 9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e;;
               vits-piper-en_US-lessac-high)   echo 8619d204c7005866fe4f420181dfa79622af6a6222389f0b0818d2af31e0db0e;;
               vits-piper-en_US-ryan-high)     echo 6a71edf4d308b9cb2eaeadc8d1f3c6bf96120ecb7fe52c29a2b6e139c59760ed;;
+              vits-piper-en_US-ryan-medium)   echo c546af78b6395b4e7c4ce1ed899438b64426a362f5d4ec5fecd090ded9ad7505;;
               vits-piper-en_US-amy-medium)    echo 9a5d1fc497f85e8022b785bff5f8105203b1e33099ee6265203efc70b0cb0264;;
               vits-piper-en_GB-cori-high)     echo 42922f07738fcde2e49eed4e959635692f73b933de35a6b7c1010162ff566292;;
               vits-piper-en_US-libritts_r-medium) echo 10dc268f3e371696d721486123e2705a9fc1faa113491979fde4d88dba1f1b1c;;
@@ -102,9 +103,10 @@ jobs:
           # One row per clip. A Piper archive names its weights after the voice, and VoiceCheck reads
           # that name off the archive's, so no row types it.
           LINEUP=$(cat <<'ROWS'
-          piper-lessac-medium|piper|vits-piper-en_US-lessac-medium|0|Today's demo voice, the control
+          piper-ryan-medium|piper|vits-piper-en_US-ryan-medium|0|Male, medium: the demo box's voice, the control
+          piper-lessac-medium|piper|vits-piper-en_US-lessac-medium|0|The demo's voice before Ryan
           piper-lessac-high|piper|vits-piper-en_US-lessac-high|0|Same speaker, higher-quality model
-          piper-ryan-high|piper|vits-piper-en_US-ryan-high|0|Male, high quality
+          piper-ryan-high|piper|vits-piper-en_US-ryan-high|0|Male, high: 0.8-0.95x on the demo droplet, at the line
           piper-amy-medium|piper|vits-piper-en_US-amy-medium|0|Female, medium
           piper-cori-high|piper|vits-piper-en_GB-cori-high|0|British English, high
           piper-libritts-0|piper|vits-piper-en_US-libritts_r-medium|0|LibriTTS-R, 904 speakers in one file
@@ -119,7 +121,7 @@ jobs:
           ROWS
           )
 
-          # An empty input would match no id, skip all fourteen rows, and finish green with nothing to
+          # An empty input would match no id, skip every row, and finish green with nothing to
           # listen to -- a run that looks like it worked. Not reachable from the UI's default, but it is
           # from the API.
           if [ -z "$WANTED" ]; then
@@ -166,8 +168,8 @@ jobs:
             esac
 
             echo "::group::Rendering $id"
-            # Never let one voice fail the whole run: a lineup of fourteen is most useful when the
-            # thirteen that worked are still listenable.
+            # Never let one voice fail the whole run: a lineup is most useful when the
+            # voices that worked are still listenable.
             if dotnet run --project tools/VoiceCheck --configuration Release --no-build "${ARGS[@]}" \
                  | tee "clips/$id.txt"; then
               RATE=$(grep -oE 'roughly [0-9.]+x real time' "clips/$id.txt" | grep -oE '[0-9.]+' || echo '?')
@@ -195,8 +197,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # ⚠️ Runs even when the render step failed. Everything OUTSIDE the per-voice `if` is fatal under
-      # `set -e` -- a checksum mismatch, a download, the job timeout -- and a failure on the fourteenth
-      # voice would otherwise discard the thirteen clips that already rendered, which is precisely what
+      # `set -e` -- a checksum mismatch, a download, the job timeout -- and a failure on the last
+      # voice would otherwise discard every clip that already rendered, which is precisely what
       # the render step's own isolation exists to prevent. Not `always()`: a cancelled run has nothing
       # worth keeping.
       - name: Upload the clips

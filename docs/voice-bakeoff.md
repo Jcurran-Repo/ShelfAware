@@ -6,7 +6,8 @@ you decide which.
 
 It exists because the decision has two halves and only one of them can be reasoned about. *Does it sound
 good* has to be heard. *Is it fast enough* has to be measured, **on the box that will run it** — the same
-model is 0.05× real time on one machine and 3.1× on another.
+Kokoro model is 1.4× real time on one machine and 3.1× on another, and a Piper voice that looked like a
+modest step on a desktop turned out five times the cost on the droplet (*A worked example*, below).
 
 ## The short version
 
@@ -34,12 +35,15 @@ demo-box problem and not a family-box one.
 
 ## The families
 
-| Family | Shape | Speed | Notes |
+| Family | Shape | Speed on the demo droplet | Notes |
 |---|---|---|---|
-| **Piper** (VITS) | weights + tokens + espeak data | **0.13–0.54×** | The demo box's voice today. Clear, noticeably flatter. The spread is the model, not the speaker: the `medium` builds run about twice as fast as the `high` ones. Weights are named after the voice, so `Speech:Piper:ModelFile` must say which. |
-| **Kokoro** | weights + voices.bin + tokens + espeak data | **1.14×** (and **3.1× on a DO-Regular droplet**) | The family box's voice. The warmest — and **the only one of the four still above 1.0× on a fast desktop core**, which is the whole shape of the droplet problem. |
-| **Kitten** | Kokoro's four files exactly, under its own config block | **0.24–0.28×** (nano), **0.62×** (mini) | 24 MB for nano, which has 8 voices, 4 male and 4 female. Mini is larger and slower than every Piper here bar one. |
-| **Matcha** | acoustic model **+ a separate vocoder** + tokens + espeak data | **0.17×** | ⚠️ The vocoder is published in a *different release* from the voice. A directory holding everything the voice archive shipped still cannot speak. It is in the cache fingerprint, so changing vocoder re-voices the clips rather than serving the old ones. |
+| **Piper** (VITS) | weights + tokens + espeak data | **0.12–0.17×** (medium), **0.8–0.95×** (high) | The demo box's voice: **`ryan-medium`**, picked by ear in the bake-off. Clear, flatter than Kokoro. The spread is the model size, not the speaker — see *A worked example* below for what that cost when it was nearly missed. The weights' file is read off the directory's name (`vits-piper-<voice>` holds `<voice>.onnx`), so a voice is one setting. |
+| **Kokoro** | weights + voices.bin + tokens + espeak data | **3.1×** | The family box's voice. The warmest, and the one that made this page necessary: on the droplet an 8.9-second reply costs 28 seconds of silence. |
+| **Kitten** | Kokoro's four files exactly, under its own config block | not measured there | 24 MB for nano, which has 8 voices, 4 male and 4 female. On a desktop it lands between Piper-medium and Piper-high; mini is slower than both. |
+| **Matcha** | acoustic model **+ a separate vocoder** + tokens + espeak data | not measured there | ⚠️ The vocoder is published in a *different release* from the voice. A directory holding everything the voice archive shipped still cannot speak. It is in the cache fingerprint, so changing vocoder re-voices the clips rather than serving the old ones. On a desktop it runs level with Piper-medium. |
+
+Every droplet figure is `tools/VoiceCheck` on the box itself, **once the model is loaded** — see below
+for why that qualifier is the whole point.
 
 ## The lineup
 
@@ -47,9 +51,10 @@ The workflow's `voices` input takes `all` (the default) or a space-separated lis
 
 | id | Model | Voice |
 |---|---|---|
-| `piper-lessac-medium` | `vits-piper-en_US-lessac-medium` | 0 — today's demo voice, the control |
+| `piper-ryan-medium` | `vits-piper-en_US-ryan-medium` | 0 — **the demo box's voice**, the control |
+| `piper-lessac-medium` | `vits-piper-en_US-lessac-medium` | 0 — the demo's voice before Ryan |
 | `piper-lessac-high` | `vits-piper-en_US-lessac-high` | 0 — same speaker, higher-quality model |
-| `piper-ryan-high` | `vits-piper-en_US-ryan-high` | 0 — male, high |
+| `piper-ryan-high` | `vits-piper-en_US-ryan-high` | 0 — male, high. ⚠️ **0.8–0.95× on the demo droplet**: at the line, not under it |
 | `piper-amy-medium` | `vits-piper-en_US-amy-medium` | 0 — female, medium |
 | `piper-cori-high` | `vits-piper-en_GB-cori-high` | 0 — British English, high |
 | `piper-libritts-0` / `-40` / `-109` | `vits-piper-en_US-libritts_r-medium` | three of its 904 speakers |
@@ -58,22 +63,40 @@ The workflow's `voices` input takes `all` (the default) or a space-separated lis
 | `matcha-ljspeech` | `matcha-icefall-en_US-ljspeech` | 0 — with the Vocos vocoder |
 | `kokoro-0` | `kokoro-int8-en-v0_19` | 0 — the family box's voice, the other control |
 
-**Where that Speed column comes from.** One bake-off run, 2026-09-23, all fourteen voices on one
-machine (a desktop i5-13600KF), model load included — so the rows are comparable to each other, which
-is the only thing a column like that is good for. Per voice:
+## A worked example: the voice that nearly shipped at the line
+
+This page already said *never quote a rate that was not measured where it will run*. Here is what the
+rule is worth, because it was nearly broken while the page existed.
+
+Ryan-high was the voice picked by ear, and the bake-off's desktop run had it at **0.39×**, in the same
+band as lessac-medium's **0.33×** — a modest step up, apparently. On the demo droplet, with the model
+loaded, it came back at **0.92–0.95×** (and 0.81–0.88× on a second visit) against lessac-medium's
+**0.18–0.19×**: nearly **five times** the cost, a hair under the threshold rather than clear of it, on
+two cores the website shares. A second visitor asking at the same moment would have pushed it over.
+Ryan-*medium* — the same speaker, the smaller model — measured **0.12–0.14×** there, level with lessac,
+and shipped instead.
+
+**Why the desktop hid it, which is the part that generalises:** on a fast machine a short clip is
+mostly *model load*. That early run timed the first read, load included, so a voice that costs five
+times as much to synthesize still looked close — both numbers were mostly the same three-quarters of a
+second of loading. `tools/VoiceCheck` now reads the sentence twice and reports the second read, the
+one a household actually waits for (the app loads its model once per process); the first read is still
+printed, because the first read-aloud after a restart does pay it.
+
+And the desktop is noisier than it looks even measured properly. The same i5-13600KF gave Ryan-medium
+**0.04×** and then **0.17×** twenty minutes apart: a hybrid chip schedules a background process on
+whichever core it likes, and a desktop is never idle. Order and rough spacing survive that; the digits
+do not.
+
+**Where the desktop column comes from, then.** One bake-off run, 2026-09-23, every voice on that
+i5-13600KF, once loaded. Good for narrowing the field by rough order and nothing else:
 
 | | | | |
 |---|---|---|---|
-| `piper-libritts-40` **0.13×** | `piper-libritts-109` **0.14×** | `piper-libritts-0` **0.16×** | `matcha-ljspeech` **0.17×** |
-| `piper-amy-medium` **0.18×** | `kitten-nano-2` **0.24×** | `kitten-nano-0` **0.27×** | `kitten-nano-5` **0.28×** |
-| `piper-lessac-medium` **0.33×** | `piper-ryan-high` **0.39×** | `piper-lessac-high` **0.48×** | `piper-cori-high` **0.54×** |
-| `kitten-mini-0` **0.62×** | `kokoro-0` **1.14×** | | |
-
-⚠️ **These are a desktop's, and they are not the numbers that decide anything.** The demo droplet is a
-2 GHz shared core with no AVX-512 VNNI, where Kokoro measured **3.1×** against this run's 1.14× — so
-expect every row above to be several times worse there, and a voice comfortably under 1.0× here can
-still miss on the box. Use this column to narrow the field by ear and by rough order; use `VoiceCheck`
-on the droplet to decide.
+| `piper-libritts-40` **0.13×** | `piper-ryan-medium` **0.14×** | `piper-libritts-0` / `-109` **0.14×** | `piper-lessac-medium` **0.16×** |
+| `piper-amy-medium` **0.16×** | `matcha-ljspeech` **0.17×** | `kitten-nano-2` **0.24×** | `kitten-nano-0` **0.28×** |
+| `kitten-nano-5` **0.29×** | `piper-ryan-high` **0.42×** | `piper-cori-high` **0.43×** | `piper-lessac-high` **0.61×** |
+| `kitten-mini-0` **0.63×** | `kokoro-0` **0.98×** | | |
 
 ⚠️ And do not mix this column with the figures in `docs/deploy-piper.md` (Piper 0.05×, Kokoro 1.37×).
 Those are best-of-three on two pinned cores with the model already loaded, on a different machine — a
