@@ -130,8 +130,22 @@ jobs:
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bzip2
           fi
 
-          mkdir -p /var/lib/shelfaware/models
-          cd /var/lib/shelfaware/models
+          # ⚠️ /var/lib/shelfaware is the SERVICE ACCOUNT's own tree -- it is the app's DataDir and the
+          # unit runs as User=shelfaware -- so anything root does inside it can be aimed by the app.
+          # The directory is therefore checked rather than trusted: `mkdir -p` is perfectly happy with
+          # a symlink that is already sitting there, and the `cd` that used to follow would have taken
+          # the whole bootstrap somewhere the app chose.
+          M=/var/lib/shelfaware/models
+          if [ -L "$M" ]; then
+            echo "::error::$M is a symlink; refusing to bootstrap through it."
+            exit 1
+          fi
+          mkdir -p "$M"
+          chown root:root "$M"
+          chmod 755 "$M"
+          # Sweeps a temp directory left by a run that died mid-fetch, on every exit path including
+          # the `set -e` ones, so a failed bootstrap never leaves a part-finished download on the box.
+          trap 'rm -rf "$M"/.bootstrap.*' EXIT
 
           # The mouth (docs/deploy-kokoro.md) and the ear (docs/deploy-moonshine.md). Each unpacks only
           # if it isn't already there, so this step is safe to re-run and costs nothing when it is.
@@ -144,22 +158,35 @@ jobs:
           # the hash. --no-same-owner/--no-same-permissions so an archive cannot choose its own
           # ownership or set a setuid bit on the way in.
           fetch() {
-            local dir="$1" sha="$2" url="$3"
-            if [ -d "$dir" ]; then echo "$dir already unpacked."; return; fi
+            local dir="$1" sha="$2" url="$3" tmp
+            # -e and -L, not -d: a symlink pointing at a directory answers `-d` yes, so the guard that
+            # makes this step safe to re-run would also let the app nominate its own model directory
+            # and have the bootstrap agree it was already unpacked.
+            if [ -e "$M/$dir" ] || [ -L "$M/$dir" ]; then echo "$dir already unpacked."; return; fi
             echo "Fetching $dir..."
+            # ⚠️ The download and the unpack happen in a fresh root-only directory, not in the models
+            # directory itself. `curl -o` follows a symlink at the output path and writes THROUGH it,
+            # as root -- so an app that planted `model.tar.bz2` pointing at a file of its choosing got
+            # root's download written into that file. mktemp makes the directory 0700 and root-owned,
+            # so there is no path in it for the app to prepare. `-p "$M"` keeps it on the same
+            # filesystem, which is what makes the final `mv` a rename rather than a copy.
+            tmp=$(mktemp -d -p "$M" .bootstrap.XXXXXX)
             # --proto on both, as voice-bakeoff.yml's get() does: a redirect must not walk a root-run
             # download off HTTPS, even with the checksum below as the backstop.
-            curl -fsSL --proto '=https' --proto-redir '=https' -o model.tar.bz2 "$url"
-            echo "$sha  model.tar.bz2" | sha256sum -c - \
-              || { echo "::error::$dir did not match its recorded sha256; not unpacking it."; rm -f model.tar.bz2; exit 1; }
-            # ⚠️ Unpacked into a staging directory and moved into place only once it is whole. The
-            # guard above is "is the directory there", so a half-extracted one — a disk that filled,
-            # a connection that dropped — would read as unpacked forever, and the app would refuse to
-            # boot naming files that were never going to arrive.
-            rm -rf .staging && mkdir .staging
-            tar xjf model.tar.bz2 -C .staging --no-same-owner --no-same-permissions
-            mv ".staging/$dir" "$dir"
-            rm -rf .staging model.tar.bz2
+            curl -fsSL --proto '=https' --proto-redir '=https' -o "$tmp/model.tar.bz2" "$url"
+            echo "$sha  $tmp/model.tar.bz2" | sha256sum -c - \
+              || { echo "::error::$dir did not match its recorded sha256; not unpacking it."; exit 1; }
+            # ⚠️ Moved into place only once it is whole. The guard above is "is it there", so a
+            # half-extracted directory — a disk that filled, a connection that dropped — would read as
+            # unpacked forever, and the app would refuse to boot naming files that were never going to
+            # arrive. Ownership is set HERE, on a directory only root can reach, so what lands in the
+            # models directory is already root-owned and world-readable rather than being fixed up
+            # afterwards: the app reads its model, it does not get to rewrite it.
+            tar xjf "$tmp/model.tar.bz2" -C "$tmp" --no-same-owner --no-same-permissions
+            chown -R root:root "$tmp/$dir"
+            chmod -R a+rX "$tmp/$dir"
+            mv "$tmp/$dir" "$M/$dir"
+            rm -rf "$tmp"
           }
           fetch kokoro-int8-en-v0_19 \
             c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd \
@@ -183,11 +210,10 @@ jobs:
             9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2
 
-          # Root-owned and world-readable, which is install.sh's posture for the app itself and for its
-          # reason: the service account reads its model, it does not get to rewrite it. A compromised app
-          # process should not be able to leave something behind in a directory it loads from.
-          chown -R root:root /var/lib/shelfaware/models
-          chmod -R a+rX /var/lib/shelfaware/models
+          # No recursive chown/chmod over the models directory any more: each model is made root-owned
+          # and world-readable inside the temp directory before it is moved in, which is install.sh's
+          # posture for the app itself and for the same reason. Doing it afterwards meant root walking
+          # a tree the service account can write to -- and it was the last step that had to.
           df -h / | tail -1
           REMOTE
 
