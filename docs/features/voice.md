@@ -25,7 +25,9 @@ the built-in reader.
   `app-data/tts-cache`, keyed on text + neighbouring segments (they change the audio) +
   `ITextToSpeech.OutputFingerprint`. **A cache hit needs no API key**, which is what lets seeded/demo
   recipes talk for a keyless visitor. Registered via `SpeechRegistration.AddSpeech` so a test can prove
-  nothing bypasses it. Bounded by `Speech:CacheMegabytes` (default 256), trimmed at startup.
+  nothing bypasses it. Bounded by `Speech:CacheMegabytes` (default 256) per household: trimmed at
+  startup, and again after any write that takes a household over it — `SpeechCacheBudget` keeps a
+  running total per household so the write path pays an add and a compare, never a directory scan.
 - **The mouth has five providers and the ear two, chosen SEPARATELY.** `Speech:Provider` picks the
   mouth: ElevenLabs (cloud, per-character, the visitor's own key), or `Kokoro`, `Piper`, `Kitten` or
   `Matcha` — all running IN THIS PROCESS via sherpa-onnx, for $0 with nothing to meter and nothing to

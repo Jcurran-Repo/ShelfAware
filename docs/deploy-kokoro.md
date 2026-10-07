@@ -184,7 +184,7 @@ Then restart the app: `sudo systemctl restart shelfaware`.
 > ⚠️ **Clips are WAV, which is about ten times the size of the MP3 the sidecar returned.** 16-bit mono
 > at 24 kHz is ~48 KB per spoken second, so the default `Speech__CacheMegabytes=256` holds roughly 90
 > minutes of speech per household rather than fifteen hours. Raise it if a household's cookbook is
-> large; the trim is per household and runs at startup.
+> large; the trim is per household, at startup and after any write that takes a household over its budget.
 
 ## 5. Verify end to end
 
