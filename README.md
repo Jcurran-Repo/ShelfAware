@@ -6,15 +6,20 @@ Snap (or just save) your grocery receipt. Reginald reads it, learns how often yo
 thing, and tells you what's about to run out — before you're standing in the kitchen realizing
 there's no coffee.
 
+<sub>Reginald is the app (the dapper egg on the sign-in page, "Eggs" to his friends); **ShelfAware** is
+the repository, solution and namespace name it grew out of. Same thing, two hats.</sub>
+
 [![CI](https://github.com/Jcurran-Repo/ShelfAware/actions/workflows/ci.yml/badge.svg)](https://github.com/Jcurran-Repo/ShelfAware/actions/workflows/ci.yml)
 &nbsp; [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
-&nbsp;·&nbsp; .NET 10 · Blazor · EF Core/SQLite · Anthropic Claude · ElevenLabs voice
+&nbsp;·&nbsp; .NET 10 · Blazor · EF Core/SQLite · Anthropic Claude · local voice (Kokoro / Piper / Moonshine) or ElevenLabs
 
-> **Live demo: [demo.shelfaware.net](https://demo.shelfaware.net)** — create an account, load the
-> sample pantry, and poke around. Everything data-side works with no API key; bring your own
-> (Settings → AI provider & keys) to light up receipt reading, chat, and voice — the
-> ["Whose keys?"](#whose-keys-running-it-for-other-people) section explains. Prefer your own
-> machine? [Run it locally](#run-it-locally).
+> **Live demo: [demo.shelfaware.net](https://demo.shelfaware.net)** — create an account (it emails you
+> a link to set a password), load the sample pantry, and poke around. The AI features run on a hosted
+> key, so there is nothing to bring: receipt reading, the assistant and recipe ideas work out of the box,
+> within a daily allowance per household and a small cap on new accounts per day — it is a shared demo,
+> not a service, and the app says so when a cap is hit. What it stores and what it sends to the AI
+> provider is on its [Privacy & data](https://demo.shelfaware.net/privacy) page; the rules of the road
+> are in [SUPPORT.md](SUPPORT.md). Prefer your own machine and your own key? [Run it locally](#run-it-locally).
 
 ![30-second tour: a receipt confirms itself, the dashboard says what's low, "we're out of dog food" updates it, and the grocery list is ready by aisle](docs/demo.gif)
 
@@ -66,8 +71,10 @@ recipes from what's actually in the house and one-taps the missing bits onto the
 recipes, settings — belongs to a *household*. My wife and I each have our own login and see the same
 pantry (she joined with an invite code from Settings); anyone else who registers gets a completely
 separate one. A deployment can also close sign-ups with one config flag and stay invite-only.
-And because it's your data, Settings will hand you all of it as a JSON download — or delete every
-trace — any time.
+And because it's your data, Settings will hand you all of it as a JSON download, or wipe the
+household's pantry — products, receipts and their images, recipes, the lot — in one transaction, any
+time. (What that leaves behind, and why: the account itself and the server's own usage records; the
+[privacy page](src/ShelfAware.Web/Components/Pages/Privacy.razor) spells it out.)
 
 ---
 
@@ -88,7 +95,7 @@ no API call, no token cost, same answer every time.
 | Understand *"we're out of dog food, low on coffee"* | **LLM** (tool calling) |
 | Match a receipt line to a product you already have | **LLM-assisted** |
 | Decide if a new tag means the same as an old one (Soda ≈ Soft Drink) | **LLM** |
-| Turn speech into text, read replies aloud | **ElevenLabs** (pure I/O — the same chat brain decides) |
+| Turn speech into text, read replies aloud | **local models** in-process (Moonshine ear, Kokoro/Piper mouth) or **ElevenLabs** — pure I/O, the same chat brain decides |
 | Answer *"can I use butter instead of oil?"* mid-recipe | **LLM** (tool calling, with the recipe in view) |
 | Hear *"next"* while you're cooking | **plain C#** — see below |
 | Predict run-out dates | **plain C#** |
@@ -133,7 +140,7 @@ flowchart TD
     subgraph LLM["ShelfAware.Llm — language understanding"]
       EX["Receipt extractor<br/>(structured outputs + validate/retry)"]
       CH["Pantry chat<br/>(tool-calling loop)"]
-      VO["ElevenLabs STT / TTS<br/>(voice is I/O; the chat is the brain)"]
+      VO["Speech in / out<br/>(local Moonshine + Kokoro/Piper, or ElevenLabs;<br/>voice is I/O, the chat is the brain)"]
       TA["Tag synonym advisor"]
       RA["Recipe advisor"]
     end
@@ -149,7 +156,7 @@ flowchart TD
 
     subgraph WEB["ShelfAware.Web — Blazor (Interactive Server)"]
       RV["Review &amp; confirm<br/>(one shared, idempotent path)"]
-      UI["Dashboard · Grocery List · Products · Recipes · Trends · Accuracy"]
+      UI["Dashboard · Products · Grocery List · Recipes · Cookbook · Meal plan<br/>Receipts · History · Trends · Reports · Accuracy · Count from a photo"]
     end
 
     R --> EX
@@ -206,11 +213,12 @@ history is re-predicted using only the trips *before* it (walk-forward, no peeki
 against the date we actually bought again. No API key, nothing to pre-generate — the numbers
 update as receipts land.
 
-Second honest part: with only ~a month of history the current numbers are modest (as of early July
-2026: median error ~11 days; ~29% of predictions within ±2 days — most products have just 3–4
-trips, and medians need data). That's the point of measuring: the dashboard's claims and the
-engine's actual skill are the same number on the same page, and I get to watch it improve instead
-of assuming it.
+Second honest part: the screenshot above is the 2026-07-12 run over ~a month of history (74% of
+104 predictions within ±2 days, median error 1 day across 41 products), and the first run a few weeks
+earlier was far worse — median error ~11 days, ~29% within ±2 — because most products had just 3–4
+trips, and medians need data. That's the point of measuring: the dashboard's claims and the engine's
+actual skill are the same number on the same page, and I get to watch it improve instead of assuming
+it. The live page is always current; the picture is whenever I last took it.
 
 ---
 
@@ -239,6 +247,9 @@ of assuming it.
 
 ## Run it locally
 
+You need the [.NET 10 SDK](https://dotnet.microsoft.com/download) (`global.json` pins `10.0.100`,
+latest feature band). Everything else restores with the build.
+
 ```bash
 git clone https://github.com/Jcurran-Repo/ShelfAware && cd ShelfAware
 
@@ -256,10 +267,6 @@ dotnet run --project src/ShelfAware.Web
 #   shown in Settings.
 ```
 
-> **Upgrading from a pre-accounts version?** v3 changed the database schema (everything is
-> per-household now) with no in-place upgrade: delete `app-data/shelfaware.db*` and let your
-> receipts re-import. The app refuses to start on an old file and tells you exactly this.
-
 ```bash
 # All tests, no API key needed: the engine is pure, the AI layer runs on a faked IChatClient,
 # and the persistence tests run on in-memory SQLite.
@@ -272,7 +279,9 @@ dotnet run --project tests/ShelfAware.Evals -- \
 ```
 
 Without any keys the app still runs — extraction and voice fail soft, and everything built on
-existing data (dashboard, prediction, backtest, grocery list, tags) keeps working.
+existing data (dashboard, prediction, backtest, grocery list, tags) keeps working. Voice can run
+entirely on your own machine with no key at all: `docs/deploy-kokoro.md`, `docs/deploy-piper.md` and
+`docs/deploy-moonshine.md` fetch the models and switch the engine over.
 
 ---
 
@@ -287,8 +296,8 @@ do the work:
 (Ollama, LM Studio, llama.cpp — self-hosted runs only), pastes a key, and can tweak which model
 does which job (receipt-reading needs vision; the assistant needs tool calling). An ElevenLabs key
 switches on voice the same way — the agent id is only for the realtime-agent option, which is the
-one thing here billed per minute. This is how the live demo runs — I'm not paying for the
-internet's tokens, and nobody has to trust me with theirs.
+one thing here billed per minute. This was the live demo's first posture — nobody had to trust me
+with a key — and it is still the right one for a box you share with people you don't know.
 
 **`managed` — the host's keys, on a meter.** The server's keys are authoritative, the key panel
 disappears from Settings, and each household gets a daily allowance — `Llm:DailyCallLimit`,
@@ -296,6 +305,13 @@ disappears from Settings, and each household gets a daily allowance — `Llm:Dai
 default). Settings shows every household its own usage for the day.
 
 Leave `KeyMode` unset and it guesses right: server key configured → managed, none → BYOK.
+
+**The live demo runs managed, capped.** A dedicated key with a spend limit at the provider, a daily
+allowance per household, a box-wide daily valve (`Demo:DailyGlobalCallLimit`) and a daily cap on new
+accounts (`Auth:DailyAccountCreationLimit`), behind email-confirmed registration — the shape in
+[`deploy/demo-box.env.example`](deploy/demo-box.env.example). Voice on it is the free in-process stack,
+so a cap is the worst thing a visitor can cost me. The caps are small on purpose: they are what makes
+it safe to leave a key on a public box.
 
 **Where a visitor's key actually lives** — the honest part, because "bring your own key" deserves
 some skepticism: it stays in the browser (localStorage, or session-only with the *"forget my keys
@@ -315,23 +331,26 @@ take my word for it.
 ShelfAware.slnx
   src/ShelfAware.Web/        Blazor app — pages, review/confirm, upload smart-confirm, DI, EF DbContext
   src/ShelfAware.Core/       Domain, prediction engine + backtest, interfaces  (no LLM, no EF)
-  src/ShelfAware.Llm/        Receipt extractor · pantry chat · tag + recipe advisors · ElevenLabs voice · prompts
-  tests/ShelfAware.Tests/    xUnit — prediction engine, backtest, estimator, tag dedup  (pure)
+  src/ShelfAware.Llm/        Receipt extractor · pantry chat · tag + recipe advisors · speech engines (local + ElevenLabs) · prompts
+  tests/ShelfAware.Tests/    xUnit — prediction engine, backtest, estimator, tag dedup, and the source-scanning build rules (pure)
   tests/ShelfAware.Llm.Tests/xUnit — tool loop, extractor retry, speech services (faked clients)
-  tests/ShelfAware.Web.Tests/xUnit — confirmation + import persistence (real EF on in-memory SQLite)
+  tests/ShelfAware.Web.Tests/xUnit — confirmation + import persistence, tenancy, metering (real EF on in-memory SQLite)
   tests/ShelfAware.Web.UI.Tests/  bUnit — real pages over that same EF/SQLite harness; fakes only at the AI + browser seams
   tests/ShelfAware.Evals/    Console harness scoring extraction vs hand-labeled fixtures
-  DESIGN.md                  The spec (rules, data model, phases)
-  CLAUDE.md                  Build state, decisions, environment notes
+  deploy/                    The droplet kit: systemd unit, install + rollback, backups, Caddy, env examples
+  docs/                      Architecture, runbooks, features, the backlog, and the build journal
+  DESIGN.md                  The original spec (rules, data model, phases) with an as-built note on top
+  CLAUDE.md                  The rules that bind a working session — short on purpose
 ```
 
 ## What's next
 
 The **cloud deploy is live** — [demo.shelfaware.net](https://demo.shelfaware.net) runs on a small
 DigitalOcean droplet (SQLite and all); the runbook and deploy kit are in
-[`docs/deploy-droplet.md`](docs/deploy-droplet.md) and [`deploy/`](deploy/). Next: more eval
-fixtures beyond one merchant, and password-reset emails (there's no mail server behind it yet —
-Settings admits as much).
+[`docs/deploy-droplet.md`](docs/deploy-droplet.md) and [`deploy/`](deploy/). What's open, and what's
+parked with a reason, lives in [`docs/backlog.md`](docs/backlog.md) — the next real items are a
+self-service account deletion, scoring the eval against a second merchant's receipts (the Costco
+fixture is labelled and waiting for a run), and a re-recorded demo GIF that shows the app as it is now.
 
 ## License
 
@@ -353,5 +372,7 @@ the NuGet dependencies) stay under their own licenses — see
 ---
 
 <sub>Built as a portfolio piece — real users (us), real receipts, and real accuracy numbers for
-*both* the LLM half and the statistics half. The full spec and decision log live in
-[DESIGN.md](DESIGN.md) and [CLAUDE.md](CLAUDE.md).</sub>
+*both* the LLM half and the statistics half. It was built with Claude Code as a co-creator under my
+direction, with every change reviewed before it reached `master`; the working rules are in
+[CLAUDE.md](CLAUDE.md), the spec in [DESIGN.md](DESIGN.md), and the decision log — including what
+each review gate caught — in [docs/journal/build-log.md](docs/journal/build-log.md).</sub>
