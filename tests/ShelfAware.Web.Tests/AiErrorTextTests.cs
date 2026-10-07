@@ -21,12 +21,12 @@ public class AiErrorTextTests
 
     // The box-wide demo valve. Most tests use one that never blocks (the family / self-host default), so they
     // exercise the credit/key logic; the two demo tests below use a blocking one.
-    private sealed record FakeDemoValve(string? Message) : IDemoValve
+    private sealed record FakeDemoValve(string? Message) : IManagedCallCaps
     {
         public ValueTask<string?> CallBlockedMessageAsync(CancellationToken ct = default) => new(Message);
     }
 
-    private static IDemoValve NotBlocked() => new FakeDemoValve(null);
+    private static IManagedCallCaps NotBlocked() => new FakeDemoValve(null);
 
     [Fact]
     public async Task Managed_with_credit_is_allowed()

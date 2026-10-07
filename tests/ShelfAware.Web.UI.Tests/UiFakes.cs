@@ -327,7 +327,7 @@ internal sealed class FakeVoiceCredentials : IVoiceCredentials
 
 /// <summary>The box-wide demo valve for AiErrorText's pre-check. Blocks with <paramref name="message"/>, or
 /// never (null, the default) — a demo-cap page test constructs one with a message.</summary>
-internal sealed class FakeDemoValve(string? message = null) : IDemoValve
+internal sealed class FakeDemoValve(string? message = null) : IManagedCallCaps
 {
     public ValueTask<string?> CallBlockedMessageAsync(CancellationToken cancellationToken = default) => new(message);
 }

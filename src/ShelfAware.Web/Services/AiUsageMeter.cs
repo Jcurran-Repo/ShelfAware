@@ -94,18 +94,38 @@ public sealed class AiUsageMeter(
             .ToList();
     }
 
+    /// <summary>THE wording for "this household's daily allowance is spent", shared by the throwing gate
+    /// and the non-throwing pre-check so a surface and the server-side gate never say two things.
+    /// ⚠️ It used to end "(Bringing your own key in Settings is never limited.)" — true, and unfollowable:
+    /// the caps are enforced only on a MANAGED circuit (<c>MeteredChatClient.EnsureManagedCallAllowedAsync</c>
+    /// returns before them for BYOK), and a managed box hides the key panel. The one audience that could
+    /// ever read the sentence was the one it could not help.</summary>
+    public const string DailyAllowanceUsedUp =
+        "Your household's AI allowance on this server is used up for today — it resets tomorrow.";
+
     /// <summary>Throws (with user-presentable text — the AI surfaces show exception-adjacent friendly
-    /// errors) when today's LLM usage has reached a configured cap. Call BEFORE the provider call.</summary>
+    /// errors) when today's LLM usage has reached a configured cap. Call BEFORE the provider call.
+    /// The non-throwing twin is <see cref="DailyCapBlockedMessageAsync"/>; both read the same check.</summary>
     public async Task EnsureLlmCallAllowedAsync(CancellationToken cancellationToken = default)
     {
+        if (await DailyCapBlockedMessageAsync(cancellationToken) is { } blocked)
+            throw new InvalidOperationException(blocked);
+    }
+
+    /// <summary>The pre-check twin of <see cref="EnsureLlmCallAllowedAsync"/>: the reason this household
+    /// can't make an LLM call today, or null. Asked by <see cref="ManagedCallCaps"/> so an AI surface can
+    /// say "used up for today" instead of attempting a doomed call and showing its generic "try again"
+    /// (the gap <c>AiErrorText</c> carried a comment about until 2026-10-07).</summary>
+    public async Task<string?> DailyCapBlockedMessageAsync(CancellationToken cancellationToken = default)
+    {
         var callLimit = EffectiveDailyCallLimit;
-        if (callLimit is null && llm.Value.DailyTokenLimit is null) return;
+        if (callLimit is null && llm.Value.DailyTokenLimit is null) return null;
 
         // A Founder household is exempt from the caps entirely (unlimited-but-recorded). Consulted AFTER
         // the no-limit check above, so a deployment that configures no caps never pays the tier read;
         // and only the GATE is skipped — the reserve/record after the provider replies are untouched, so a
         // Founder's usage still lands in the row.
-        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return;
+        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return null;
 
         AiUsage? row;
         try
@@ -142,7 +162,7 @@ public sealed class AiUsageMeter(
             // point: the fallback is safe for what the household is served and is the one place where the
             // operator's only bound is the thing being skipped.
             logger.LogError(ex, "Reading today's AI usage for the daily caps failed; allowing the call (credit still gates it).");
-            return;
+            return null;
         }
 
         // Coalesce the absent row to zero rather than early-returning: a limit of 0 must block the FIRST
@@ -150,18 +170,9 @@ public sealed class AiUsageMeter(
         var calls = row?.Calls ?? 0;
         var tokens = (row?.InputTokens ?? 0) + (row?.OutputTokens ?? 0);
 
-        if (callLimit is int limit && calls >= limit)
-        {
-            throw new InvalidOperationException(
-                "Today's AI allowance on this server is used up — it resets tomorrow. " +
-                "(Bringing your own key in Settings is never limited.)");
-        }
-        if (llm.Value.DailyTokenLimit is long tokenLimit && tokens >= tokenLimit)
-        {
-            throw new InvalidOperationException(
-                "Today's AI allowance on this server is used up — it resets tomorrow. " +
-                "(Bringing your own key in Settings is never limited.)");
-        }
+        if (callLimit is int limit && calls >= limit) return DailyAllowanceUsedUp;
+        if (llm.Value.DailyTokenLimit is long tokenLimit && tokens >= tokenLimit) return DailyAllowanceUsedUp;
+        return null;
     }
 
     /// <summary>True when this household may mint another cook-along session today.</summary>

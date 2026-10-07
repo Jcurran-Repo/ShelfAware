@@ -449,13 +449,14 @@ builder.Services.AddScoped<ByokChatClient>();
 builder.Services.AddScoped<IEntitlements, Entitlements>(); // the current household's tier — the meter's Founder exemption + the Settings badge
 builder.Services.AddScoped<AiUsageMeter>();
 // The box-wide demo valve is operator-global (auth.db, no per-scope state), so singleton — injected into the
-// scoped metering chain below. Also exposed as IDemoValve so the AI surfaces' pre-check (AiErrorText) can ask
-// "is the box capped for today?" through the seam without depending on the concrete DB-backed meter.
+// scoped metering chain below. The AI surfaces' pre-check (AiErrorText) asks IManagedCallCaps instead: a
+// scoped composite of this valve and the per-household AiUsageMeter caps, in the order the gate checks them,
+// so a surface can say "used up for today" without depending on either concrete DB-backed meter.
 // The health probe caches its last answer for a few seconds, so it must be a singleton or the cache is
 // per-request and buys nothing. It holds no per-user state — it asks two databases whether they open.
 builder.Services.AddSingleton<HealthProbe>();
 builder.Services.AddSingleton<DemoUsageMeter>();
-builder.Services.AddSingleton<IDemoValve>(sp => sp.GetRequiredService<DemoUsageMeter>());
+builder.Services.AddScoped<IManagedCallCaps, ManagedCallCaps>();
 builder.Services.AddSingleton<ServiceMarginMeter>();
 builder.Services.AddScoped<IChatClient, MeteredChatClient>();
 
@@ -810,6 +811,8 @@ app.Use(async (context, next) =>
             && !path.StartsWithSegments("/_framework")
             && !path.StartsWithSegments("/_content")
             && !path.StartsWithSegments("/demo")     // public, anonymous
+            && !path.StartsWithSegments("/about")    // public, anonymous — a just-activated account can read it
+            && !path.StartsWithSegments("/privacy")  // public, anonymous — likewise
             && !Path.HasExtension(path.Value);       // static assets
 
         if (isAppPage)
@@ -967,7 +970,7 @@ app.MapGet("/api/receipt-image/{id:int}", async (
 // PhotoUploadIntake — the shared front door both photo endpoints use.
 app.MapPost("/api/receipts/extract", async (
     HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
-    IEntitlements entitlements, IDemoValve demoValve, ReceiptIngestionService ingestion, ILoggerFactory logs, CancellationToken ct) =>
+    IEntitlements entitlements, IManagedCallCaps demoValve, ReceiptIngestionService ingestion, ILoggerFactory logs, CancellationToken ct) =>
 {
     var (files, error) = await PhotoUploadIntake.ReadAsync(request, ctx, antiforgery,
         mt => mt.StartsWith("image/", StringComparison.OrdinalIgnoreCase) || mt == "application/pdf",
@@ -1005,7 +1008,7 @@ app.MapPost("/api/receipts/extract", async (
 // freezer to PDF). The raw model output is deliberately NOT shipped back — it's debug-only and can be large.
 app.MapPost("/api/pantry-photo/read", async (
     HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
-    IEntitlements entitlements, IDemoValve demoValve, IShelfCensusReader reader, IHouseholdDbFactory dbFactory,
+    IEntitlements entitlements, IManagedCallCaps demoValve, IShelfCensusReader reader, IHouseholdDbFactory dbFactory,
     ILoggerFactory logs, CancellationToken ct) =>
 {
     // maxFiles: 8 matches the census page's own cap (PantryPhoto.MaxPhotos — the shelf reader looks at a
