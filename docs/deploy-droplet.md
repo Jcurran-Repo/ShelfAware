@@ -60,13 +60,17 @@ price renders as `¤3.99` instead of `$3.99`. The env template ships
 ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw enable
 ```
 
-**4. Config.** Copy [`deploy/env.example`](../deploy/env.example) to
-`/etc/shelfaware/env`, edit it, and `chmod 600` it. The committed default is the
-**demo posture**: `Llm__KeyMode=Byok`, no keys on the server, visitors paste their own
-in Settings. The managed / family variant sits in the same file, commented out.
+**4. Config.** For the **demo box**, copy
+[`deploy/demo-box.env.example`](../deploy/demo-box.env.example) to `/etc/shelfaware/env`,
+fill in its `<SET ME>` lines, and `chmod 600` it — the demo runs **managed**, on a dedicated,
+spend-capped key, with the box-wide valve and sign-up controls already filled in (the mechanics
+are in "[The demo box on YOUR key](#the-demo-box-on-your-key-the-ai-valve--abuse-controls)"
+below). For a **self-host** box, start from the annotated full reference
+[`deploy/env.example`](../deploy/env.example) instead, whose committed default is BYOK: no keys
+on the server, visitors paste their own in Settings.
 
-> **Free read-aloud voice (optional):** set `Speech__Provider=Kokoro` to voice recipes
-> with a model running inside the app instead of ElevenLabs — $0 per call, no key, and no
+> **Free read-aloud voice (optional):** set `Speech__Provider=Piper` (the demo's voice — Kokoro is
+> the richer, heavier alternative) to voice recipes with a model running inside the app instead of ElevenLabs — $0 per call, no key, and no
 > second service. Unpack a model first with [docs/deploy-kokoro.md](deploy-kokoro.md); the
 > app refuses to start if it is pointed at one that isn't there.
 
@@ -117,10 +121,20 @@ powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 -TargetHost root@<dro
 ```
 
 `install.sh` stages the new build outside the live directory, so the service is down
-for seconds, and it keeps the previous build at `/opt/shelfaware.prev` — roll back by
-moving that back and `systemctl start shelfaware`. Data is untouched either way: it
-lives in `/var/lib/shelfaware`, not the app directory. (The publish output lands in
-`src/ShelfAware.Web/bin/publish/linux-x64` locally, which is gitignored.)
+for seconds, and it keeps the previous build at `/opt/shelfaware.prev`. **If the new build
+does not come up, it rolls back on its own**: the previous build goes back to `/opt/shelfaware`
+and is started, the failed build is kept at `/opt/shelfaware.failed` for inspection (nothing
+removes it until the next rollback — `rm -rf` it once you have looked), and the script still
+exits non-zero so the deploy that ran it goes red. Its output says which of the two happened.
+Data is untouched either way: it lives in `/var/lib/shelfaware`, not the app directory. (The
+publish output lands in `src/ShelfAware.Web/bin/publish/linux-x64` locally, which is
+gitignored.)
+
+The unit carries `StartLimitBurst=5` over `StartLimitIntervalSec=120`, so a build that crashes
+on launch stops being relaunched after five tries and the unit reads `failed` rather than
+cycling through `activating` forever. The rollback runs `systemctl reset-failed shelfaware`
+before starting the previous build because a tripped limit also refuses a manual `start` —
+remember that if you ever roll back by hand.
 
 ## Deploying from CI, so it doesn't need anyone at a desk
 
@@ -156,8 +170,18 @@ Setting it up, once:
    `root` on the box would be one `echo` away. An **environment** secret would not: no environment, no
    key, no deploy. The approval stops being a line in a file that the next branch can delete.
 
-Run it from Actions → *Deploy to the droplet* → **Run workflow**, choosing the branch. Tick
-**bootstrap** the first time — and again whenever a new voice becomes the default: it adds the 2 GB
+Run it from Actions → *Deploy to the droplet* → **Run workflow**, choosing the branch.
+
+**It refuses a commit CI has not passed.** Before building anything, the workflow resolves the
+chosen ref to a commit and asks GitHub for that commit's `Build & test` check run (ci.yml's job);
+anything but a `success` conclusion — no run, still running, failed — stops the deploy with the
+reason in the log. The approval button proves a person pressed it, not that the tests did, and a
+ref can name a branch pushed a minute ago that has never been built. CI runs on pull requests and
+on pushes to `master`, so a branch with no PR has no check: open one (or deploy `master`). For an
+emergency only, the **force** input skips the gate; a forced run says so in a warning annotation on
+the run and in capitals in the log, so it can never pass for a gated one in the history later.
+
+Tick **bootstrap** the first time — and again whenever a new voice becomes the default: it adds the 2 GB
 swap file and unpacks the voice models (the Piper voices and Kokoro) and Moonshine, idempotently, so a
 rebuilt droplet is one dispatch away rather than an afternoon with this page. Every archive is checked
 against a recorded sha256 before anything is unpacked — they are fetched as root onto a box holding
@@ -199,16 +223,18 @@ session and a `systemctl restart`.
 
 ## The demo posture, spelled out
 
-- **BYOK, enforced by absence.** The box holds no AI keys, so there is nothing to leak
-  and nobody's tokens to spend; `Llm__KeyMode=Byok` states explicitly what Auto would
-  infer from the missing key. The Settings key panel, the strict CSP, and the
-  key-custody story in the README's "Whose keys?" section were built for exactly this
-  deployment.
-- **Keyless visitors still get a real demo.** The sample pantry, the review grid, and
-  prediction/backtest/reports over the seeded catalog all work with no key at all — a
-  visitor's own key switches on extraction, chat, and voice. (Recipe narration replays
-  keyless *after* a household has synthesized it once — a cache hit needs no key — but
-  the cache is per household and starts empty, so narration isn't keyless on day one.)
+- **Managed, on a dedicated and spend-capped key.** The demo box runs `Llm__KeyMode=Managed`
+  with its own Anthropic key so a visitor can try extraction, chat and recipe reading with no
+  key of their own; the key is bounded in layers — per-household quotas, the box-wide daily
+  valve, the account cap and email confirmation, and the spend limit set on the key itself in
+  the Anthropic console — all of which the next section spells out. BYOK (`Llm__KeyMode=Byok`,
+  no keys on the server, visitors paste their own in Settings) remains the **self-host**
+  posture, and the Settings key panel, the strict CSP, and the key-custody story in the README's
+  "Whose keys?" section were built for that one.
+- **Keyless visitors get the whole demo.** The sample pantry, the review grid, and
+  prediction/backtest/reports over the seeded catalog work with no key on any box; on the
+  managed demo the AI surfaces work too, until the day's valve closes. Read-aloud is free and
+  in-process (Piper, below), so it costs the key nothing either.
 - **Registration stays open** (the default). If the open door ever attracts abuse, set
   `Auth__AllowRegistration=false` — invite-code joins and existing accounts keep
   working. The per-IP rate limits on the `/Account` POSTs and the signed-url endpoint
@@ -259,10 +285,11 @@ box with **existing** accounts, turning on email confirmation locks them out unt
 backfill `sqlite3 auth.db "UPDATE AspNetUsers SET EmailConfirmed = 1;"` — or start from a
 fresh DB (no accounts to backfill).
 
-**Read-aloud voice** on the demo is free via Kokoro, which runs in the app's own process — set
-`Speech__Provider=Kokoro` *after* unpacking a model ([docs/deploy-kokoro.md](deploy-kokoro.md)).
+**Read-aloud voice** on the demo is free via Piper (`en_US-ryan-medium`), which runs in the app's own
+process — set `Speech__Provider=Piper` *after* the bootstrap has unpacked the models
+([docs/deploy-piper.md](deploy-piper.md); Kokoro is the heavier option, [docs/deploy-kokoro.md](deploy-kokoro.md)).
 Until then, leave it commented; chat + receipts don't need it, and read-aloud just fails
-soft. Budget ~600 MB of RAM once a recipe has been read, and add swap on a 2 GB box.
+soft. Piper is small; Kokoro budgets ~600 MB of RAM once a recipe has been read, so add swap on a 2 GB box.
 
 **Payments stays OFF** on the demo (no `Payments` section) — with billing off, the AI
 simply works for every fresh household, gated only by the caps above.
@@ -330,6 +357,47 @@ ticked, which re-downloads every model into a fresh root-owned directory.
 DO's droplet snapshots make a fine second layer, not a substitute — they're crash-consistent,
 not application-aware.
 
+Each `db-*` snapshot also holds `config/env` and `config/Caddyfile` (mode 600) — the box's
+`/etc/shelfaware/env` and `/etc/caddy/Caddyfile` — so a rebuilt droplet gets its keys, caps and
+proxy config back along with its data. ⚠️ That makes every snapshot, and the offsite remote they
+sync to, a copy of the box's secrets: choose a remote you would trust with the API key.
+
+## Before inviting testers
+
+Box-side checks, one line each, for the day the link goes to people who are not you. Do them in
+order; most take a minute.
+
+1. **Set the spend limit on the dedicated key** — Anthropic console → the demo's key → a daily
+   spend limit. This is the hard ceiling; everything in the env file is the polite one.
+2. **Register the admin account yourself, first.** `Admin__Emails__0` only grants `/admin` to
+   whoever signs in with that address — register it before anyone else can, then open `/admin`
+   and confirm the *Demo box usage* panel renders.
+3. **Point an external uptime monitor at `https://demo.shelfaware.net/healthz`** — any free
+   pinger, alerting on anything but a 200. `/healthz` is anonymous, cached for 5 s, and checks
+   both databases; it is the box's own answer to "is it serving", and nothing inside the box can
+   tell you the box is down.
+4. **Confirm the backup timer is live and do one restore drill.** `systemctl list-timers` must
+   show `shelfaware-backup.timer` with a next-run time; then run
+   `/usr/local/lib/shelfaware/backup-droplet.sh … --dry-run` (the installer printed the exact
+   line), and once for real (`systemctl start shelfaware-backup.service`). Walk the restore steps
+   at the top of `deploy/backup-droplet.sh` against a scratch directory at least once — a backup
+   nobody has restored from is a hope.
+5. **Confirm the clock and the locale**: `timedatectl` shows the household's timezone (or the env
+   file carries `TZ=`), and the env file carries `LANG=en_US.UTF-8`. Without them an evening
+   purchase files on tomorrow's date and prices render as `¤3.99`.
+6. **Set `Auth__InviteCodeLifetimeDays`** (the demo example ships `7`). An invite code admits
+   its bearer to a household's whole pantry and bypasses `AllowRegistration` by design; on a box
+   whose link will be pasted into group chats, a code must not be permanent.
+7. **Keep a copy of `/etc/shelfaware/env` off the box.** The backup now includes it (above), so
+   an offsite remote covers this — but if the backup is still same-disk only, `scp` it somewhere
+   safe by hand. It is the one file a rebuilt droplet cannot regenerate.
+8. **Grant the Actions app the branch-protection bypass on `master`** — GitHub → Settings →
+   Branches → the `master` rule → *Allow specified actors to bypass required pull requests* →
+   add the GitHub Actions app. Until then the `test-status.json` snapshot that `ci.yml` writes and
+   the mutation score that `mutation.yml` writes are refused with `GH006` and land only as a
+   warning on the run (run 35926123956 is one), and the `/admin` *Tests & quality* card keeps
+   reading a stale file. One setting, owner only.
+
 ## If you use Nginx instead of Caddy
 
 Everything Caddy does silently you must write yourself, and each omission breaks a
@@ -360,6 +428,25 @@ server block turns a forged Host into a link-poisoning vector. Either make the N
 `server_name` exact (no default catch-all reaching this app), or set
 `AllowedHosts=<your-domain>` in `/etc/shelfaware/env` so the app itself refuses
 foreign hosts — ideally both.
+
+## Traps
+
+Each of these has cost a real deploy, or was found the night before one would have.
+
+- **`AllowedHosts` turns the loopback health check into a 400.** Once the env file pins
+  `AllowedHosts=demo.shelfaware.net`, ASP.NET's host filtering answers `400 Bad Request` to any
+  request whose `Host` header is not that name — and a bare `curl http://127.0.0.1:5000/healthz`
+  on the box sends `Host: 127.0.0.1:5000`. **The tell:** the site works in a browser, the service
+  is `active`, the journal shows nothing (the rejection happens before any logging), and the
+  loopback curl returns a 400 with an empty body. The fix is to send the name:
+  `curl -H "Host: demo.shelfaware.net" http://127.0.0.1:5000/healthz`. The deploy workflow reads
+  the name off the box's own env file for exactly this reason, and an external monitor hits the
+  public URL, which carries the right Host already.
+- **A systemd service starts with no timezone and no locale** — step 2 of the first-time setup.
+  Evening purchases on tomorrow's date, prices as `¤3.99`.
+- **A tripped start limit refuses a manual start.** After five crashes in two minutes the unit is
+  `failed` and `systemctl start shelfaware` does nothing until `systemctl reset-failed shelfaware`.
+  `install.sh`'s rollback does this for you; a hand rollback has to.
 
 ## What's verified and what isn't
 

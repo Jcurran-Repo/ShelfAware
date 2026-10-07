@@ -38,9 +38,16 @@ on:
         type: boolean
         required: false
         default: false
+      force:
+        description: 'EMERGENCY ONLY: deploy even if this commit has no green "Build & test" CI run'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
+  # To read the commit's check runs for the CI gate below — nothing here writes to the repo.
+  checks: read
 
 # One deploy at a time. cancel-in-progress is false: a half-finished install.sh is a box with a
 # staging directory and no service, so an in-flight deploy finishes rather than being abandoned.
@@ -63,6 +70,57 @@ jobs:
         with:
           # Empty means the ref this workflow was dispatched on, which is what the dispatcher chose.
           ref: ${{ inputs.ref || github.ref }}
+
+      # The `ref` input is free-form, so it is never interpolated into a run: block; the one thing the
+      # steps below need is the 40-hex sha the checkout resolved it to, and git is what says what that is.
+      - name: Resolve the ref to a commit
+        id: resolve
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # ⚠️ Refuse to deploy a commit CI has not passed. The approval button proves a person pressed it, not
+      # that the tests did — and a `ref` can name any branch, including one that was pushed a minute ago and
+      # has never been built. ci.yml's job is named "Build & test" (its check run carries the same name);
+      # the commit must have one with conclusion `success`. The API's default filter returns only the
+      # LATEST run of each name, so a re-run that went green counts and an older red one does not.
+      # No run at all is a refusal too: CI runs on pull requests and on pushes to master, so a branch
+      # with no PR has never been tested — open one, or wait for its check.
+      - name: Require a green CI run on this commit
+        if: ${{ !inputs.force }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          # "none" when the commit has no such check run; "pending:<status>" while one is still running
+          # (its conclusion is null until it finishes); otherwise the conclusion itself.
+          conclusion=$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=Build%20%26%20test&per_page=100" \
+            --jq '[.check_runs[] | select(.name == "Build & test")] | first
+                  | if . == null then "none" else (.conclusion // ("pending:" + .status)) end')
+          case "$conclusion" in
+            success)
+              echo "CI is green on $SHA (Build & test: success)." ;;
+            none|"")
+              echo "::error::No \"Build & test\" check run exists for $SHA — CI has not run on this commit (it runs on pull requests and on pushes to master). Open a PR for the branch or wait for its check; for an emergency, re-dispatch with force=true."
+              exit 1 ;;
+            pending:*)
+              echo "::error::\"Build & test\" on $SHA is still running (${conclusion#pending:}). Wait for it to go green, then re-dispatch; for an emergency, re-dispatch with force=true."
+              exit 1 ;;
+            *)
+              echo "::error::\"Build & test\" on $SHA concluded '$conclusion', not success — refusing to deploy an untested or failing commit. For an emergency, re-dispatch with force=true."
+              exit 1 ;;
+          esac
+
+      # Loud, in the log AND as an annotation on the run, so a forced deploy can never pass for a gated one
+      # when someone reads the history later.
+      - name: FORCE — the CI gate was skipped
+        if: ${{ inputs.force }}
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          echo "::warning title=CI gate skipped (force=true)::Deploying $SHA WITHOUT requiring a green Build & test run. This is the emergency path; the commit may be untested or failing."
+          echo "##################################################################"
+          echo "#  force=true: the CI gate was SKIPPED for $SHA"
+          echo "##################################################################"
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
@@ -256,23 +314,40 @@ jobs:
           scp -i ~/.ssh/id_deploy -o BatchMode=yes deploy/install.sh "$HOST:/tmp/shelfaware-install.sh"
 
       # install.sh stages outside the live directory, swaps, keeps the previous build at
-      # /opt/shelfaware.prev, and fails loudly if the service doesn't come back up. Its exit code is
-      # this job's result — a deploy that didn't start the app is a red run, not a green one.
+      # /opt/shelfaware.prev, and if the service doesn't come back up it ROLLS BACK on its own: the
+      # previous build is started again and the failed one is kept at /opt/shelfaware.failed. Its exit
+      # code is this job's result either way — a deploy that didn't land is a red run even when the box
+      # recovered, and the script's own output says which of the two happened.
       - name: Install
         env:
           HOST: ${{ secrets.DROPLET_HOST }}
-        run: ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$HOST" 'bash /tmp/shelfaware-install.sh'
+        run: |
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$HOST" 'bash /tmp/shelfaware-install.sh' \
+            || { echo "::error::install.sh failed. If a previous build existed it has been ROLLED BACK and is \
+                 running again (the failed build is kept at /opt/shelfaware.failed); if not, the box is down. \
+                 Read the step output above for which, then the journal on the box."; exit 1; }
 
       # Asked of the app itself, over the loopback, so a green here means the APP answered — not that
       # a proxy in front of it served a cached page or an error skin.
+      #
+      # ⚠️ With a Host header the app will accept. Once /etc/shelfaware/env sets AllowedHosts (the demo
+      # box pins demo.shelfaware.net), ASP.NET's host filtering answers 400 to anything else — and a bare
+      # loopback curl sends `Host: 127.0.0.1:5000`, so the check would go red against a perfectly healthy
+      # box. The hostname is read off the box's own env file, the one place it is defined, rather than
+      # kept as a second copy here that could drift; unset means the app accepts any host (the `*`
+      # default), and `localhost` is as good as anything then.
       - name: Health check
         env:
           HOST: ${{ secrets.DROPLET_HOST }}
         run: |
-          ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$HOST" \
-            'curl -fsS --max-time 20 http://127.0.0.1:5000/healthz' \
-            || { echo "::error::/healthz did not answer. The build is live but unhealthy; \
-                 /opt/shelfaware.prev is the previous one."; exit 1; }
+          if ! ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$HOST" 'bash -euo pipefail -s' <<'REMOTE'
+          host=$(sed -n 's/^AllowedHosts=//p' /etc/shelfaware/env | cut -d';' -f1 | tr -d '[:space:]')
+          curl -fsS --max-time 20 -H "Host: ${host:-localhost}" http://127.0.0.1:5000/healthz
+          REMOTE
+          then
+            echo "::error::/healthz did not answer. The build is live but unhealthy; /opt/shelfaware.prev is the previous one."
+            exit 1
+          fi
 
       # ⚠️ `systemctl is-active` and nothing more. This repo is PUBLIC, so an Actions log is world
       # readable, and a journal tail from a box carrying real households' data is not a thing to publish

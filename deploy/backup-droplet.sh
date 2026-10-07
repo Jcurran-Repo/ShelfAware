@@ -14,11 +14,19 @@
 #
 # Layout under $DEST:
 #   db-YYYY-MM-DD-HHMMSS/shelfaware.db + auth.db + manifest.txt   point-in-time snapshots, kept
-#                                                                 for $KEEP_DAYS
+#                       + config/env + config/Caddyfile           for $KEEP_DAYS. config/ holds the
+#                                                                 box's /etc/shelfaware/env and
+#                                                                 /etc/caddy/Caddyfile, mode 600
 #   files/{receipts,recipe-images,keys,tts-cache}                 a ROLLING rsync mirror of the
 #                                                                 blob trees (append-mostly;
 #                                                                 per-stamp copies would balloon)
 #   backup-log.txt                                                one line per run, success or fail
+#
+# ⚠️ The env file holds the box's SECRETS (the API key, the mail password), so from the night it was
+# added every snapshot does too, and so does any offsite remote they sync to: choose a remote you
+# would trust with the key. It is in the backup because it is the one file a rebuilt droplet cannot
+# regenerate -- every cap, every key and every address is in it, and a restore that has the
+# databases but not the config is a box that boots BYOK with no mailer.
 #
 # --delete discipline (the publish-family.ps1 lesson -- a mirror dry run once nearly ate an
 # unrelated backup): mirrors target ONLY the dedicated subfolders this script creates under
@@ -44,7 +52,9 @@
 # To RESTORE: stop the service, copy the chosen db-* snapshot's two .db files into $DATA_DIR
 # (deleting any -wal/-shm beside them, which belong to the database you are replacing), restore the
 # files/ trees, chown to the service account, start. The snapshot files are ordinary SQLite
-# databases -- no tooling needed to read one.
+# databases -- no tooling needed to read one. On a REBUILT box, its config/env goes back to
+# /etc/shelfaware/env (root-owned, mode 600) and config/Caddyfile to /etc/caddy/Caddyfile before
+# the service and Caddy are started.
 set -euo pipefail
 
 DATA_DIR=/var/lib/shelfaware
@@ -94,6 +104,11 @@ STAMP=$(date -u +%Y-%m-%d-%H%M%S)
 LOG="$DEST/backup-log.txt"
 DATABASES="shelfaware.db auth.db"
 TREES="receipts recipe-images keys tts-cache"
+# The box's config, snapshotted beside the databases. The env file is where the unit reads it from
+# (deploy/shelfaware.service: EnvironmentFile=), so it is not an option here; the Caddyfile is
+# optional because a box on the Nginx alternative (docs/deploy-droplet.md) has none.
+CONFIG_ENV=/etc/shelfaware/env
+CONFIG_PROXY=/etc/caddy/Caddyfile
 
 # One line per run, success or failure -- an operator reading only this file must be able to tell
 # the difference. Best-effort: a log that cannot be written must not fail a backup that worked.
@@ -156,6 +171,32 @@ for db in $DATABASES; do
     size=$(du -h "$target" | cut -f1)
     echo "  $db -> $target ($size, integrity ok)"
     printf '%s : %s, integrity_check ok\n' "$db" "$size" >>"$MANIFEST"
+done
+
+# ---- 1b. The box's config, inside the same snapshot ----------------------------------------------
+# Rides in the .incomplete directory with the databases and is renamed into place with them, so a
+# db-<stamp>/ either has the whole set or does not exist, and retention prunes config and data as
+# one. `install -m 600` so the copy is never more readable than the original (root:600 on the box);
+# this script runs as root from the oneshot unit (install-droplet-backup.sh), which is what lets it
+# read the env file at all. Missing env file = the wrong box or a half-provisioned one, and a
+# "backup" without the config is the kind that is only found wanting during a restore.
+[ -f "$CONFIG_ENV" ] || fail "$CONFIG_ENV not found -- is this the box the service runs on?"
+for cfg in "$CONFIG_ENV" "$CONFIG_PROXY"; do
+    if [ ! -f "$cfg" ]; then
+        echo "  (no $cfg -- skipping; a box on the Nginx alternative has no Caddyfile)"
+        continue
+    fi
+
+    target="$SNAPSHOT/config/$(basename "$cfg")"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        echo "  would copy $cfg -> $target (mode 600)"
+        continue
+    fi
+
+    install -d -m 700 "$SNAPSHOT/config" || fail "could not create $SNAPSHOT/config"
+    install -m 600 "$cfg" "$target" || fail "copying $cfg failed"
+    echo "  $cfg -> $target (mode 600)"
+    printf '%s : copied, mode 600\n' "$cfg" >>"$MANIFEST"
 done
 
 if [ "$DRY_RUN" -eq 0 ]; then
@@ -227,6 +268,6 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "DRY RUN complete -- nothing was written, deleted or uploaded."
 else
     offsite=$([ -n "$RCLONE_REMOTE" ] && echo "offsite $RCLONE_REMOTE" || echo "same-disk only")
-    log_line "ok ($STAMP): databases snapshotted + verified, trees mirrored, kept ${KEEP_DAYS}d, $offsite"
+    log_line "ok ($STAMP): databases snapshotted + verified, config copied, trees mirrored, kept ${KEEP_DAYS}d, $offsite"
     echo "Backup complete."
 fi
