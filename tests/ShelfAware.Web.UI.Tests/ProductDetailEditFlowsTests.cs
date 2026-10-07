@@ -578,4 +578,53 @@ public class ProductDetailEditFlowsTests : PageTestContext
         Assert.DoesNotContain("Price history", cut.Markup);
         Assert.DoesNotContain("price points", cut.Markup);
     }
+
+    /// <summary>Seeds one priced purchase per (date, price, size) — a receipt carrying the line and a
+    /// purchase stamped with it — the same shape the Trends tests seed, so the two pages are fed alike.</summary>
+    private int SeedPricedTrips(string name, params (DateOnly Date, decimal Price, string? Size)[] buys)
+    {
+        using var db = Db.CreateDbContext();
+        var product = new Product { Name = name, Category = Category.Dairy };
+        db.Products.Add(product);
+        db.SaveChanges();
+        foreach (var (date, price, size) in buys)
+        {
+            var receipt = new Receipt
+            {
+                Merchant = "Store", PurchasedAt = date, Status = ReceiptStatus.Confirmed, ImagePath = "n/a",
+                Lines = [new ReceiptLine
+                {
+                    RawText = name, NormalizedName = name, Quantity = 1m, UnitPrice = price, Size = size, ProductId = product.Id,
+                }],
+            };
+            db.Receipts.Add(receipt);
+            db.SaveChanges();
+            db.PurchaseEvents.Add(new PurchaseEvent { ProductId = product.Id, PurchasedAt = date, Quantity = 1m, ReceiptId = receipt.Id, Size = size });
+            db.SaveChanges();
+        }
+        return product.Id;
+    }
+
+    [Fact]
+    public void A_mixed_size_product_charts_its_most_bought_size_and_names_it()
+    {
+        // Trends now draws every size as its own series; this page keeps charting ONE — the
+        // most-bought — and says so. The two agree by construction (Dominant is the head of BySize),
+        // and this pins that the chart here is still that head: the gallon's two trips, not three
+        // points with a half-gallon dip in the middle. The half-gallon stays in the purchase table.
+        var id = SeedPricedTrips("Whole Milk",
+            (Today.AddDays(-30), 3.49m, "1 gal"),
+            (Today.AddDays(-15), 2.29m, "64 fl oz"),
+            (Today.AddDays(-3), 3.69m, "1 gal"));
+        var cut = RenderDetail(id);
+
+        var heading = cut.FindAll("h2").Single(h => h.TextContent.Contains("Price history"));
+        Assert.Contains("— 1 gal", heading.TextContent);
+        var chart = cut.Find("svg.linechart");
+        Assert.Equal("Whole Milk price per purchase over time, 1 gal size", chart.GetAttribute("aria-label"));
+        Assert.Equal(2, chart.QuerySelectorAll("circle").Length); // two gallon trips, no half-gallon point
+        Assert.Contains("2 price points", cut.Markup);
+        Assert.Contains("charting the most-bought size", cut.Markup);
+        Assert.Contains((2.29m).ToString("C"), cut.Find("table").TextContent); // the other size is still listed
+    }
 }

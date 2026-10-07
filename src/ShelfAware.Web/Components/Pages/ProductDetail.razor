@@ -949,10 +949,11 @@ else
 
         // The chart plots ONE size's prices (the dominant bucket) so it shows a real trend — $/bag next
         // to $/each is a cliff, not a price move. Built from the SAME raw receipt lines Trends and Reports
-        // use and routed through the SAME PriceSeries.Dominant, so the three can never disagree about a
-        // trend: it collapses each shopping trip to one point (a line listed twice on one receipt is not a
-        // price move) and drops $0 lines. The purchase table below still shows every purchase's own price;
-        // the caption names the charted size when the product mixes sizes.
+        // use and routed through the SAME PriceSeries: Dominant is the head of PriceSeries.BySize, which
+        // Trends charts in full (one row per size), so the three can never disagree about a trend — it
+        // collapses each shopping trip to one point (a line listed twice on one receipt is not a price
+        // move) and drops $0 lines. The purchase table below still shows every purchase's own price; the
+        // caption names the charted size when the product mixes sizes.
         var pricePoints = pricedLines.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList();
         if (PriceSeries.Dominant(pricePoints) is { } series)
         {
