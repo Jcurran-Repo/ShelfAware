@@ -53,8 +53,10 @@ Directory.CreateDirectory(receiptsDir);
 // a recording of its recipes, so wiping the rows and leaving the clips would make that button a lie.
 // Speech:CacheMegabytes <= 0 means OFF — the cache isn't registered at all, rather than being emptied at
 // every boot while it refills all session (which would re-buy every recipe after a restart AND use the disk).
-var speechCacheMb = builder.Configuration.GetValue<int?>("Speech:CacheMegabytes") ?? 256;
-var speechCacheDir = speechCacheMb > 0 ? Path.Combine(dataDir, "tts-cache") : null;
+// ONE reading of the budget (SpeechRegistration.CacheBudgetBytesOf) — the same number the after-write trim
+// is registered with, so the boot sweep below and the per-household budget can never trim to two caps.
+var speechCacheBytes = SpeechRegistration.CacheBudgetBytesOf(builder.Configuration);
+var speechCacheDir = speechCacheBytes > 0 ? Path.Combine(dataDir, "tts-cache") : null;
 builder.Services.AddDbContextFactory<ShelfAwareDbContext>(options =>
     // SplitQuery: several read paths Include two+ collections (Purchases + Signals + Tags/Substitutes).
     // As a single query that's a cartesian join — row-multiplying and slow — which is what EF's [20504]
@@ -616,14 +618,15 @@ builder.Services.AddRateLimiter(o =>
 
 var app = builder.Build();
 
-// Keep the speech cache from creeping forever. It only grows when text changes (an edited step orphans
-// its clip, and its neighbours'), so once at startup is the right cadence — a per-write sweep would put
-// a directory scan on the path the cache exists to make fast. The budget is PER HOUSEHOLD (so a heavy
-// user can't evict a light one's clips and make them re-buy the audio), which means total disk is
-// households × Speech:CacheMegabytes rather than a single ceiling.
+// Keep the speech cache from creeping forever. This boot sweep covers every household's drawer (and root
+// orphans) once; between boots, a write that takes a household over its budget triggers its own trim
+// (SpeechCacheBudget + CachingTextToSpeech) — the in-process voices made clips free and ~10× larger, so
+// a once-at-boot cadence let a cookbook-reading household run far past the cap for weeks. The budget is
+// PER HOUSEHOLD (so a heavy user can't evict a light one's clips and make them re-buy the audio), which
+// means total disk is households × Speech:CacheMegabytes rather than a single ceiling.
 if (speechCacheDir is not null)
 {
-    CachingTextToSpeech.Trim(speechCacheDir, speechCacheMb * 1024L * 1024L,
+    CachingTextToSpeech.Trim(speechCacheDir, speechCacheBytes,
         app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SpeechCache"));
 }
 
