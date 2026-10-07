@@ -1,5 +1,8 @@
 # Test-suite audit & rebuild — working doc
 
+**Status:** ✅ CLOSED (arc finished 2026-08-01) — this is the historical working doc. The counts and
+coverage figures below are from that arc; the live count is `src/ShelfAware.Web/wwwroot/test-status.json`.
+
 The arc's driving document (branch `feature/test-suite-rebuild`, started 7/30/2026).
 Phase B fills the worklist; verdicts and findings land here as they're made, so the
 audit survives any one session.

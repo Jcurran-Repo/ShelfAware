@@ -2,7 +2,32 @@
 *LLM-powered pantry replenishment tracker. Display name: **Shelf Aware**. Repo/solution/namespace: `ShelfAware`.*
 
 **Author:** Jordan Curran · **Status:** Approved for build · **Target:** 2-weekend core — then kept going over later weekends because it was fun (and enjoying the work matters)
-*As-built deviations and environment notes live in [CLAUDE.md](CLAUDE.md).*
+*As-built deviations live in [docs/architecture.md](docs/architecture.md) and
+[docs/journal/build-log.md](docs/journal/build-log.md); environment notes in
+[docs/environment.md](docs/environment.md). [CLAUDE.md](CLAUDE.md) holds only the rules.*
+
+> **As built (2026-10-07).** The spec below is the original two-weekend brief and is kept verbatim as
+> the record of what was asked for. The build went well past it, and §0, §1, §2 and §12 no longer
+> describe the app that runs:
+>
+> - **Auth and multi-user exist**: ASP.NET Identity accounts, households with invite codes, Google
+>   sign-in, email-confirmed registration, password reset — everything §0.1 and §12 said not to build.
+>   Tenancy is per household, not single-user.
+> - **Hosting is a DigitalOcean droplet** (Caddy + systemd, `docs/deploy-droplet.md`), not Azure App
+>   Service; a second box runs on a PC behind Cloudflare Access. Transactional email (SMTP via MailKit)
+>   exists and is config-gated on the `Email:` section.
+> - **24 pages, not the three in §8** — plus a read-only GraphQL API, a credits/tiers ledger with a
+>   Stripe adapter behind `Payments:Enabled`, and a settings surface with many config sections
+>   (`Llm:`, `Speech:`, `Email:`, `Demo:`, `Auth:`, `GraphQL:`, `Payments:` …).
+> - **Voice runs in-process** — Kokoro, Piper or Moonshine through sherpa-onnx — with ElevenLabs as an
+>   optional keyed provider. §2's "Anthropic Messages API" is still the LLM, behind the interfaces §0.3
+>   asked for, but the pinned model IDs have moved on from the one named there.
+> - **The display name is Reginald** (the mascot's nickname is "Eggs"); `ShelfAware` remains the
+>   repository, solution and namespace name, which is why this file still says "Shelf Aware".
+>
+> Where the current truth lives: `docs/architecture.md` (data model, tenancy, the schema seam),
+> `docs/environment.md` (toolchain and workflow), `docs/journal/build-log.md` (the decision log, arc by
+> arc), and `CLAUDE.md` (rules only, since the 2026-09-19 split). The spec body is not rewritten below.
 
 ---
 

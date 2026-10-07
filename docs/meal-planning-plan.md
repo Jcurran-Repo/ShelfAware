@@ -1,6 +1,8 @@
 # Meal planning — design plan
 
-Status: **design, pre-implementation.** Owners: Jordan (+ wife). Drafted 2026-08-31.
+**Status:** ✅ IMPLEMENTED — this is the historical plan. The feature shipped as `/meal-plan`
+(`MealPlanPage.razor`, `AnthropicMealPlanGenerator.cs`, `MealPlanJobs.cs`); the decisions below are
+why it is shaped the way it is, not a to-do list. Drafted 2026-08-31; marked historical 2026-10-07.
 
 This is the consolidated design before any code, in the mold of `subscription-plan.md` /
 `undo-history-plan.md`. It records decisions *and their reasons* so a build session (or a future
@@ -9,11 +11,11 @@ the code).
 
 ---
 
-## 1. Why — this is a weight-loss tool, not a pantry optimizer
+## 1. Why — this is a habit tool, not a pantry optimizer
 
-The real driver is **weight loss**. With no plan, "what's for dinner?" collapses into snacking —
-unstructured grazing is the enemy. And the household **doesn't like planning meals, so they don't**.
-So the feature has to do the planning *for* them.
+The driver is **a household that wants to eat better without planning meals**. With no plan, "what's
+for dinner?" collapses into snacking — unstructured grazing is the enemy. And a household that
+**doesn't like planning meals won't do it**, so the feature has to do the planning *for* them.
 
 Consequences that shape everything:
 - **Success = they cook the planned meals instead of snacking.** This is a behavior-change tool.

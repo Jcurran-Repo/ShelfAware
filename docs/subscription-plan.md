@@ -1,6 +1,8 @@
 # Shelf Aware — subscription & credits plan
 
-**Status: product decisions made (Jordan, 2026-08-23); nothing built.** This is the spec-in-progress for
+**Status: ✅ IMPLEMENTED — tiers and the entitlement seam (PR #27) and cost accounting (PR #28) on
+2026-08-24; the credit ledger, the gate and the Stripe adapter by 2026-09-19 — the status line below is historical; the rest of this file is live reference
+for how billing works and is kept current.** It was the spec-in-progress for
 the billing workstream that CLAUDE.md item 9 deferred ("billing/pricing = Jordan's separate workstream")
 and that the founder-tier design (2026-08-23, same day) was parked into. When the arc starts, this doc is
 the handoff — same role `graphql-api-plan.md` and `undo-history-plan.md` played for theirs.
@@ -970,9 +972,10 @@ can't nag.
      2026-08-25: `deploy/backup-family.ps1` + `deploy/sqlite-snapshot/` (nightly live-DB snapshots
      with integrity checks + a rolling blob mirror) — see CLAUDE.md item 57. The droplet version is
      the same shape on cron.
-   - **Uptime + error alerting.** The ErrorLog is pull-only (someone must visit /admin) and no
-     health endpoint exists; a paid box that dies at 2am must page somebody. Minimum: a free
-     external uptime ping against the sign-in page; better: mail the admin on a new error
+   - **Uptime + error alerting.** The ErrorLog is pull-only (someone must visit /admin). A health
+     endpoint now exists — `/healthz` (`HealthProbe.cs`; anonymous, 5 s cached, checks both DBs,
+     503 JSON naming the failing check) — but nothing watches it, so a paid box that dies at 2am
+     still pages nobody. Minimum: a free external uptime ping against `/healthz`; better: mail the admin on a new error
      fingerprint (the `IAccountMailer` seam exists). §1's spend-ceiling alert covers cost, not
      availability.
    - **Pre-auth support contact** — a support email on the sign-in page/footer and named in the

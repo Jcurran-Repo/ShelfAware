@@ -1,5 +1,10 @@
 # Shelf Aware — Feature Timeline
 
+> ⚠️ **Historical log.** Last maintained 2026-08-25; as of 2026-10-07 it is roughly fifty merged PRs
+> behind `master` and is not being backfilled. The live state is `docs/backlog.md` (what is open) and
+> `docs/journal/build-log.md` (what shipped, arc by arc). Read the entries below as a record of the
+> first ten weeks, not as the roadmap.
+
 The master list of every feature, shipped and planned, by release phase/version.
 Terse on purpose (no descriptions) — **git log** has the descriptions, **DESIGN.md** and
 **CLAUDE.md** have the detail. This file exists so the full roadmap — including what *isn't*
@@ -36,7 +41,7 @@ subscriptions phases 1–2 · support-flow · bug-report state capture)._
 - [x] Capstone README — 6/30/2026
 - [x] Cloud deploy + live demo URL — **DigitalOcean droplet (NOT Azure)**, live at demo.shelfaware.net via the committed kit (docs/deploy-droplet.md + deploy/deploy.ps1) — 8/11/2026 (full entry under "Phase 5 — LIVE" below)
 - [x] README demo.gif — 7/12/2026 (predates v3.5+, so re-recording is optional polish; its storyboard was deleted with it)
-- [ ] README accuracy.png — Not complete (the one remaining README TODO, ~line 190)
+- [x] README accuracy.png — 7/12/2026 (`docs/accuracy.png` has existed since then; this line said "Not complete" until 10/7/2026 because nobody re-checked)
 
 ### v1 enhancements (added over later weekends)
 - [x] UI design-system + dashboard polish — 6/26/2026
@@ -648,13 +653,13 @@ subscriptions phases 1–2 · support-flow · bug-report state capture)._
 ## Subscriptions (docs/subscription-plan.md; PRs #27 phase 1 / #28 phase 2)
 - [x] **Phase 1 — entitlement seam + Founder tier** (PR #27): tiers (Shelf / Aware / Sous Chef / Founder) as an auth-side `Household.Tier` enum + an admin grant/revoke roster + a Founder badge. Founder = tier #1 of the paid arc ($2.99/mo · $27.99/yr, credits 1.65× subscribers-only, merchant-of-record payments, BYOK by deployment mode) — 8/24/2026
 - [x] **Phase 2 — cost accounting** (PR #28): `AiPricing` catalog + `CostMicros` (per-day AI cost in micros, additive on `AiUsage`) + a monthly usage view + a credit ledger (auth.db) with a welcome grant. L1 fix (independent best-effort money write) + L3 root fix (double-create-orphan race) merged with it; regated clean + live-verified. **1912 green** — 8/24/2026
-- [ ] **Phase 3 — payments** — STARTED, on local branch `feature/subscription-payments` (rebased onto master + the Stripe Managed Payments decision doc). SMP CHOSEN (cheap + stable, no recurring fee); 5 gated sub-steps via a provider seam + a FAKE adapter (foundation → webhook → checkout/portal → lifecycle → real SMP adapter); only the last needs Jordan's Stripe test keys — Not complete (in progress)
+- [x] **Phase 3 — payments** — shipped: the provider seam, the fake adapter, the Stripe adapter and the webhook handler all live under `src/ShelfAware.Web/Billing/`, gated off by `Payments:Enabled` (default off). SMP was the choice (cheap + stable, no recurring fee); the 5 gated sub-steps landed in order — marked done 10/7/2026 (this line still said "in progress" six weeks after the fact)
 
 ## Support-flow polish (PRs #29 / #30)
 - [x] **Receipt totals on the Upload REVIEW screen** (PR #29) — the printed subtotal/savings/tax/total now show during review, not only after confirming; a shared `ReceiptTotalsPanel` renders on BOTH /receipts and the review screen (v5.2's totals capture was the underlying fix) — 8/25/2026
 - [x] **Reporter-side ticket resolution + admin "propose resolved"** (PR #30) — three states from two timestamps: Open → Proposed (`ProposedResolvedAt`, admin-set) → Resolved. The reporter resolves/confirms/reopens their OWN tickets via `ReporterReportService` (ordinary household-scoped context, NO IgnoreQueryFilters — the structural inverse of the admin's cross-household write); the admin can propose a fix for the reporter to confirm OR unilaterally resolve ("ghost customers"). **1925 green** — 8/25/2026
 
-## Bug-report STATE CAPTURE (branch feature/bug-report-state-capture — pushed, PR pending)
+## Bug-report STATE CAPTURE (branch feature/bug-report-state-capture — merged; this heading said "PR pending" until 10/7/2026)
 - [x] **A diagnostic snapshot on bug reports** — clicking "🐞 Report a bug" captures the page's state AT THE CLICK (Blazor Server files the report on a DIFFERENT page, so it can't be read on /bugs; a per-circuit `BugReportContext` courier carries it there). Two independently-removable sections in a "Details to attach" panel (⚠️ never silent — shown in full, each dropped on its own): technical details (URL, viewport, browser, theme, timezone, a ring buffer of recent client-side JS errors via `bug-capture.js`) and the page's visible text. Stored as `BugReport.StateJson`; rendered for the admin via a shared `BugDiagnosticsView` (the reporter must see EXACTLY what the admin gets — the pair that must not drift). `Bounded()` clamps server-side (the JS caps are browser-only). Gate: both reviews PASS + fix-pass re-reviewed clean; live drive-tested. **1957 green, 0 warnings** — 8/25/2026
 
 ---

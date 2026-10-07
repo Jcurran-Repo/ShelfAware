@@ -72,9 +72,6 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   list. That is an unbounded per-call input-token cost the household controls, and it is what makes a
   provider timeout reachable on purpose rather than by luck. Pre-existing; raised 2026-09-19.
 
-- **`docs/accuracy.png`** — the README's last remaining TODO (line ~190). ⚠️ **Check before acting:**
-  the file exists at `docs/accuracy.png` and the README renders it; the old note claiming it was
-  outstanding was itself stale. Verify what's actually missing before building anything.
 - **Re-record `docs/demo.gif`** — optional polish, not a gap. It has existed since 2026-07-12
   (`5f34b24`), but it pre-dates every feature from v3.5 on: variety, expiration, Reports, the whole
   counting arc, the census, the tour. A re-record needs a NEW capture plan first — the original
@@ -127,6 +124,75 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   rather than dropping out of the scan — but they are genuinely unjudged today. None calls a provider.
   If one ever needs judging, move the fragment into a component rather than widening the lift.
 
+- **There is no account deletion.** "Delete all my data" (`UserDataService.cs`) removes the pantry
+  tables, receipt images, the TTS cache, recipe images and API tokens, and deliberately keeps
+  `AiUsages` and `CreditLedger` (the operator's cost record). What it does not touch: the `AspNetUsers`
+  row, the `Household` row, `UserLoginStats` and `ProcessedPaymentEvents` — `HouseholdService.cs:289`
+  says so in as many words ("no account deletion exists yet"). The README's old promise to "delete
+  every trace" was reworded 2026-10-07 to say what the button actually does. A real deletion has to
+  decide what happens to a household's other members, the credit ledger a refund may still need, and
+  the Stripe customer, which is why it is a design item and not a tidy-up.
+
+- **CI's "Publish test status" job has never landed a commit.** It pushes to `master` on every
+  post-merge run and branch protection refuses it every time (run 35926123956: `GH006: Protected
+  branch update failed … 2 of 2 required status checks are expected`), and `ci.yml` turns the refusal
+  into a warning, so `src/ShelfAware.Web/wwwroot/test-status.json` is still the hand-generated
+  2026-09-19 snapshot (`CommitSha ""`, `Branch ""`) — the card §6 of the remediation plan made
+  self-maintaining is not. The fix is a GitHub setting, not a repo change: let the Actions app bypass
+  protection for that path, or have the job open a PR instead. `mutation.yml` is getting the same
+  commit pattern for the mutation score and needs the same bypass, so one setting closes both.
+
+- **The CSP trusts `https://esm.sh` site-wide for one optional feature.** `Program.cs:731-752` allows
+  `script-src https://esm.sh` so the cook-along can load the ElevenLabs SDK, which is off by default.
+  That trusts everything that CDN ever serves, on every page, on every box — and on a BYOK box a
+  compromise there can read `localStorage['shelfaware.ai']`. The honest fix is to vendor the SDK at a
+  pinned version (the worklets already are, see `THIRD-PARTY-NOTICES.md`) or to add the origin only on
+  the page that needs it. Parked because the feature is off by default and the demo box is managed-key.
+
+- **No `ErrorBoundary` anywhere.** Acknowledged in the code at `Cookbook.razor:693` and
+  `Recipes.razor:1091`: an exception that escapes an event handler tears down the whole circuit, and
+  the person sees Blazor's reconnect overlay instead of the page with one broken panel. The handlers
+  catch what they expect, so this is about the unexpected. A boundary per page (or in `MainLayout`
+  around `@Body`) is small; deciding what it renders, and how that reaches the error log, is the work.
+
+- **No clock abstraction in Web.** 113 wall-clock reads in `ShelfAware.Web`, 48 of them the literal
+  `DateOnly.FromDateTime(DateTime.Today)`, and 0 in Core, which takes `today` as a parameter. The
+  Core half is why the engine is testable; the Web half is why page tests cannot pin a date and why
+  the "one prediction" drifts below can exist at all (two `today`s on one page). A `TimeProvider`
+  injected at the composition root is the standard shape; the cost is touching 113 sites in one
+  change, which the rule on partial conversions says is the only way to do it.
+
+- **Three "one prediction, one story" drifts.** (1) `ProductDetail.razor:257` computes "expires in N
+  days" in markup from a second `today` rather than reading it off the `PredictionResult` beside it.
+  (2) `ReportDataService.cs:147` calls `Predict` without `honorQuantity` while `:250` and every page
+  pass it, so a report can disagree with the page it links to about a counted item. (3)
+  `PantryPhoto.razor:732` defaults both flags. Each is the exact shape the CLAUDE.md rule was written
+  for; each is a one-line fix plus the test that pins it, and (2) is the one most likely to be seen.
+
+- **`ElevenLabsSpeechToText.cs:82` has no `OperationCanceledException` arm** while every Anthropic
+  provider in the same project has one (`catch (OperationCanceledException) when
+  (cancellationToken.IsCancellationRequested) { throw; }`, pinned by `ProviderCancellationSiteTests`).
+  A cancelled transcription is logged as a failure and reported as one. That build rule covers the
+  Anthropic sites and the pages, not this `HttpClient` provider, which is how it slipped.
+
+- **`MealPlanJobs.cs:15` promises a test that does not exist.** The comment says the detached runner
+  is covered; nothing under `tests/` exercises it. Either write the test (a job that outlives its
+  circuit, is cancelled with the host, and reports to the right household) or delete the claim — a
+  comment that names a test is a claim in the §6 sense.
+
+- **`coverlet.collector` is referenced by all four test projects and nothing collects coverage.**
+  It was added for the 2026-07-30 audit (`docs/test-audit.md`) and no workflow has passed
+  `--collect:"XPlat Code Coverage"` since. Either wire a coverage step into `ci.yml` (and decide what
+  to do with the number — the mutation score is the one the repo actually trusts) or drop the four
+  references. A dependency nothing uses is a question every reader has to answer again.
+
+- **Two things the suites never reach.** The bUnit suite never renders `Register`, `Login`,
+  `ExternalLogin` or `ChooseHousehold` — the pages a new person meets first, and the ones with the
+  most hand-written auth flow. And `wwwroot/js` holds 19 modules (`theme.js`, `bug-capture.js`,
+  `cookbook-carousel.js`, `voice.js` …) with no JS test tooling at all; the enhanced-nav theme
+  regression in PR #18 was exactly the kind of bug a ten-line test would have held. The account pages
+  are static-rendered, so bUnit can mount them; the JS side needs a runner decision first.
+
 ## Parked, with reasons
 
 - **CSV history importer** — Walmart won't export to Jordan's state, so there is no itemized source to
@@ -145,7 +211,21 @@ and renders `¤3.99` (invariant culture — a systemd service starts with **no**
 first live deploy). Set the droplet's timezone (`timedatectl set-timezone`, or `TZ` in the service
 env) and keep `LANG` in the env file. Runbook step 2 covers both.
 
+⚠️ **Branch protection refuses the test-status commit, and CI reports it as a warning.** Every
+post-merge `ci.yml` run ends with `GH006: Protected branch update failed` from the "Publish test
+status" job (first seen in run 35926123956), so the `/admin` card reads the 2026-09-19 snapshot no
+matter how many PRs merge. It looks green. The one-line fix is on GitHub, not in the repo: in the
+`master` branch ruleset, add the GitHub Actions app to the bypass list (or let the job push a PR).
+`mutation.yml`'s score commit needs the same allowance.
+
 ## Recently closed
+
+- **`docs/accuracy.png`** — verified 2026-10-07: the file exists (since 2026-07-12) and the README
+  renders it. Nothing to do; the item was carried for months on a note that was itself stale.
+- **The model picker offered aliases.** `Settings.razor:1041` listed `claude-sonnet-5` and
+  `claude-opus-4-8`, both aliases, against DESIGN.md §2's "pin versioned IDs, never aliases" — an
+  alias moves under you and the pinned-ID rule exists so a receipt extracted today and one extracted
+  next month ran the same model. Fixed 2026-10-07 on the docs-and-gaps branch.
 
 - **A meal plan charging for meals it does not deliver** — closed 2026-09-19, in two passes. The first
   fixed the gate: it asks whether the balance covers *this act's* price, so a household is refused a plan
@@ -161,7 +241,11 @@ env) and keep `LANG` in the env file. Runbook step 2 covers both.
   say what it delivered, which would silently refund the whole act.
 
 - **Phase-5 cloud deploy** — LIVE on a DigitalOcean droplet since 2026-08-11 (not Azure), via
-  `docs/deploy-droplet.md` + `deploy/`. The demo link points at https://demo.shelfaware.net.
+  `docs/deploy-droplet.md` + `deploy/`. The demo link points at https://demo.shelfaware.net. It runs
+  in **Managed** key mode (`Llm__KeyMode=Managed`, the host's own spend-capped key) with
+  email-confirmed registration and daily caps on new accounts, per-household AI calls and tokens, and
+  box-wide AI calls — the caps are deliberate and stay (Jordan: "it has to stay to keep me safe from
+  bots"). Earlier notes calling it BYOK describe how it launched, not how it runs.
 - **Learning corrected names and brands from receipt review** — the corrected product NAME via the
   alias's product (PR #19, item 53), the corrected BRAND per (merchant, raw text) via PR #46 (item 61).
 - **The ~768–1400px header overflow** — retired by the left sidebar nav rail (PR #21, 2026-08-22).

@@ -7,7 +7,8 @@ most of it is a trap that costs twenty minutes and teaches nothing.
 
 ## The toolchain
 
-**The SDK is declared in `global.json`**, and all three workflows read it with
+**The SDK is declared in `global.json`**, and all five workflows (`ci.yml`, `deploy-droplet.yml`,
+`mutation-pr.yml`, `mutation.yml`, `voice-bakeoff.yml`) read it with
 `global-json-file` rather than naming a wildcard of their own, so CI cannot drift from what you build
 with (`docs/remediation-plan.md` §2). It asks for **10.0.100 or later within 10.0**, no previews:
 
@@ -74,7 +75,7 @@ re-running locally and shrugging.
   throwaway account (e.g. `jordan@test.local`) — `auth.db` is dev-local and gitignored. A pre-v3
   pantry DB makes startup fail fast by design (delete `app-data/shelfaware.db*` and re-import).
 - **API key** is in dotnet user-secrets, id `3d6755e6-9881-43a6-813c-fe3ebd974cd9`, key `Llm:ApiKey`.
-  Editing that file by hand repeatedly failed for Jordan. To change it: have him save the bare key
+  Hand-editing that file is error-prone. To change it: have Jordan save the bare key
   to a gitignored repo file (see the sandbox gotcha below), move it into secrets.json programmatically,
   delete the temp file. Never echo or commit the key.
 - **Claude's tool sandbox reads a FROZEN snapshot of the user's `%APPDATA%` / user-secrets, separate
@@ -92,7 +93,7 @@ re-running locally and shrugging.
   `app-data/shelfaware.db*` (clean empty DB; re-import the 3 real receipts via Upload) OR, to keep
   the curated data without re-extraction, `ALTER TABLE … ADD COLUMN` + backfill against the SQLite
   file (a throwaway `dotnet run` console referencing `Microsoft.Data.Sqlite.Core` works; PowerShell
-  5.1 can't load the .NET 10 assemblies). Real receipts: `C:\Users\Jorcu\Documents\Walmart Receipts`.
+  5.1 can't load the .NET 10 assemblies). Real receipts: `C:\Users\<you>\Documents\Walmart Receipts`.
 - **Blazor `IBrowserFile` handles die when their `<InputFile>` unmounts OR re-activates** —
   `_blazorFilesById` is per-element and replaced per change event. ⚠️ Since v4.8 (item 48) neither
   photo page holds a handle past its own change event: every picked file is read into memory AT

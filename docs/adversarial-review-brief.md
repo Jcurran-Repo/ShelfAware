@@ -5,7 +5,9 @@ Claude that built the voice arc, which is exactly why it shouldn't be the one re
 high-effort review of that branch found five real bugs in code it had read all session, including a
 page that held the microphone open and never let go. Authorship is a blindfold.
 
-Delete this file, or update it, when the review has happened.
+**Status (2026-10-07):** historical. The reviews this brief asked for happened — the pre-merge gates
+and the 2026-09-18 audit are recorded in `docs/remediation-plan.md` §9 — and the brief is kept as
+the record of how they were framed. It is still a usable template for the next fresh-context review.
 
 ---
 
