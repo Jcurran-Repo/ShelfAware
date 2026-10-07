@@ -21,17 +21,6 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   list. `docs/mutation-testing.md` §"Known limitation: compile-error mutants" describes the bucket but
   reads as "a few mutants cannot exist", not "all of them can vanish and the check still passes".
 
-- **The TTS cache is trimmed only at startup, and a free voice fills it ~10× faster.** `CachingTextToSpeech.Trim`
-  runs once, at boot, against `Speech:CacheMegabytes` per household. That cadence was chosen when every clip
-  was an MP3 someone had paid ElevenLabs for — small, and self-limiting because nobody synthesizes what
-  they are billed for by accident. The in-process Kokoro voice makes clips **WAV at ~48 KB per spoken
-  second** and free, so a household reading its way through a cookbook on a box that is up for weeks can
-  run a long way past the cap between restarts. On a 2 GB droplet that also now holds ~600 MB of model,
-  that is the disk to watch. Nothing is broken today — the cap is still enforced, just not promptly — and
-  the fix (trim after a write, for the household written) is a change to a hot path with its own cost, so
-  it is a deliberate decision rather than a tidy-up. **Revisit once the family box has a few weeks of real
-  read-aloud on it**, which is the first time there will be a real number instead of an estimate.
-
 - **The mutation score on `/admin` is carried forward, not re-measured.** `ci.yml` does not run Stryker,
   so its snapshot never measures a score; it now keeps whatever the last measuring run wrote rather than
   blanking the tile (which is what it did before 2026-09-19, and would have removed the card on the first
@@ -42,16 +31,23 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   weekly run next changes the score**, since that is when the staleness would first bite.
 
 - **The credit gate checks the balance but does not reserve it.** `EnsureManagedCallAllowedAsync` reads
-  the balance before the provider call; `RecordCreditConsumptionAsync` writes the draw after it. So several
-  acts started at once — two tabs, the roaming voice agent, a fast clicker — can all pass the same check
-  before any of them draws, and `RecordConsumptionAsync` writes its negative row with no floor. The result
-  is an **overdraft, not free credit**: the balance goes negative, the next gate refuses, and the household
-  has to fill the hole before spending again, so it self-corrects and errs toward the operator for exactly
-  one burst. Closing it properly means a reservation row at the gate and a release path on every exit of
-  every act, which is real work for a bounded, self-correcting exposure — parked deliberately, and named
-  here because it was previously nowhere. Found 2026-09-19 while writing up why the charge lands first
-  (`docs/subscription-plan.md` §4.w). **Revisit if a balance is ever seen materially negative.**
-
+  the balance before the provider call; the act's charge is claimed in the tail after it, and
+  `RecordConsumptionAsync` writes the negative row with no floor. So several ACTS started at once can all
+  pass the same check and all charge — an **overdraft, not free credit**: the balance goes negative, the next
+  gate refuses, and the household fills the hole before spending again, so it self-corrects and errs toward
+  the operator for exactly one burst. ⚠️ **Re-costed 2026-10-07** (assessment in the session that did the
+  pre-release audit): the original note said closing it needs "a reservation row at the gate and a release
+  path on every exit of every act". The release path already exists — `AiActionScope.DisposeAsync` →
+  `MeteredChatClient.ReverseUndeliveredAsync`, built 2026-09-19 after this note was written, runs on every
+  exit with `delivered` defaulting to 0 — so "reserve then release unused" collapses to "charge at the gate,
+  refund what wasn't delivered". What is left is a conditional ledger write (`INSERT … WHERE balance >=
+  price`, raw SQL, atomic on SQLite only in a form that has to be checked on the PC), carrying the margin-day
+  stamp from the gate to the tail, a file-backed test harness for the concurrency case, and three semantic
+  calls that are Jordan's: a failed first call writes a net-zero charge+reversal pair that appears in the
+  export; a ledger failure at the gate refuses the act (today it lets the call run — pinned by
+  `A_failed_money_write_costs_that_call_not_the_whole_action`); and `CheckAiAsync` becomes a preview beside
+  the write that enforces. Its own PR, on the PC, after those are decided. **Revisit if a balance is ever
+  seen materially negative.**
 - **Tag dedup does not see through Unicode confusables.** `TagVocabulary.Normalize` now folds to one
   Unicode normal form, so a precomposed "Café" and a decomposed one are the same tag. A Cyrillic "Ѕoda"
   against "Soda" is still a new tag. That needs a confusable *skeleton* mapping rather than a normal
@@ -76,22 +72,19 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   (`5f34b24`), but it pre-dates every feature from v3.5 on: variety, expiration, Reports, the whole
   counting arc, the census, the tour. A re-record needs a NEW capture plan first — the original
   storyboard was deleted when the gif landed, per that file's own lifecycle note.
-- **A per-size Trends price chart** — the sibling of the price-trend fix in PR #37 (item 60).
-- ⚠️ **Eggs' suit buttons are misaligned — realign on EVERY icon** (Jordan's call, 2026-09-05). The two
-  blue suit buttons are off-centre and staggered (`cx=272,cy=356` / `cx=278,cy=376`, right of the
-  `x=256` centre line), and the coordinates are duplicated across the SVG sources, `EggsMascot.razor`,
-  and the rasterized PNGs. Fix the SVG(s) and the component together, then regenerate the PNGs. Full
-  detail and the file list are in `docs/icons/README.md`.
 - ⚠️ **Speech is neither metered nor gated** (found by the phase-7 security gate, 2026-09-19).
   `ElevenLabsTextToSpeech` and `ElevenLabsSpeechToText` are typed `HttpClient`s, not `IChatClient`s, so
   they never reach `MeteredChatClient`: nothing records their cost, nothing charges for them, and
   `RecipeReadAloud.razor` has no `AiErrorText.BlockedReasonAsync` gate (unlike `PushToTalk.razor`). A
-  household at **zero balance** can still burn the host's ElevenLabs quota. The published prices for
-  `TtsSynthesis` and `RealtimeMinute` have been WITHDRAWN from the Settings price list
-  (`CreditPricing.MeteredActions`) so no false statement stands, but the spend gap is still open.
-  Wiring it needs two things the app can't see from inside: a real ElevenLabs invoice to price a read
-  against (the 3-credit figure is an estimate, never a measurement), and a charge point that isn't an
-  `IChatClient`. Jordan's call whether to wire it or leave speech free.
+  household at **zero balance** can still burn the host's ElevenLabs quota — on a box that HAS an ElevenLabs
+  key; the demo box deliberately has none and voices with Piper in-process, so there the exposure was CPU
+  and disk, not dollars. **Narrowed 2026-10-07:** the disk half is closed by the after-write cache trim
+  (Recently closed) and the CPU half is bounded by `PromptInput` capping a pasted recipe at 20,000
+  characters; synthesis was already serialised (`SherpaTtsEngine`). The published prices for
+  `TtsSynthesis` and `RealtimeMinute` stay WITHDRAWN from `CreditPricing.MeteredActions`, so no false
+  statement stands. What remains is the ElevenLabs case on a paid box: wiring it needs a real ElevenLabs
+  invoice to price a read against (the 3-credit figure is an estimate) and a charge point that isn't an
+  `IChatClient`. Jordan's call whether to wire it or leave cloud speech free.
 - **The remediation arc** — all seven phases landed 2026-09-19, designed in `docs/remediation-plan.md`,
   with the review-gate pass on phase 7 written up in its §9. What's left out of that arc is deliberate:
   draining logic out of `.razor` (D1) and EF Migrations (D3), both with reasons in §8.
@@ -113,10 +106,6 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   A plain `.Take(…)` silently degrades dedup quality for exactly the households with the most tags, which
   is the wrong trade; the honest fix is to send the nearest-N by the cheap matcher, which is a change to
   what the advisor is asked, not just how much.
-- **The recipe request box has no cap, client or server.** `Recipes.razor`'s input goes straight into a
-  charged prompt in `AnthropicRecipeAdvisor`. One gate weaker than the tag path was, since it sits behind
-  `AiErrorText.BlockedReasonAsync`, but it is the same shape and should get the same treatment: a
-  server-side refusal with a visible reason, not just a `maxlength` attribute.
 - **Four pages cannot be read by the razor lift the build rules use.** `MainLayout`, `Accuracy`,
   `GroceryList` and `MealPlanPage` each define a `RenderFragment` with a razor TEMPLATE expression
   (`=> @<div>…`), which the razor compiler turns into C# but a plain brace-match lift cannot. They are
@@ -219,6 +208,11 @@ matter how many PRs merge. It looks green. The one-line fix is on GitHub, not in
 `mutation.yml`'s score commit needs the same allowance.
 
 ## Recently closed
+
+- **The TTS cache is trimmed only at startup, and a free voice fills it ~10× faster.** — closed 2026-10-07. `SpeechCacheBudget` keeps a lock-free running byte total per household (seeded by one scan on the household's first write after boot); a write that crosses `Speech:CacheMegabytes` claims the household's one trim slot and runs the existing eviction sweep detached from the request, which re-measures the drawer and corrects the total. The common case is an interlocked add and a compare — no directory scan on the hot path, which was the cost that parked it. The boot trim is unchanged. Ten tests in `CachingTextToSpeechTests`.
+- **A per-size Trends price chart** — closed 2026-10-07. `PriceSeries.BySize` is the one definition of a product's price series by size, ranked most-bought first; `Dominant` is now defined as its head, so Product Detail's one-size chart and Trends' every-size rows agree by construction. Trends renders one row per (product, size); the year's spend stays per product and spans its size rows. Six Core tests, three bUnit tests.
+- **Eggs' suit buttons are misaligned — realign on EVERY icon** — closed 2026-10-07. Both buttons centred at `cx=256`, `cy=352/372` in `shelfaware-icon.svg` and `EggsMascot.razor` (the two sibling SVGs already had them there); the three served PNGs re-rasterised from the corrected source. `docs/icons/README.md` records the placement.
+- **The recipe request box has no cap, client or server.** — closed 2026-10-07. `PromptInput` in Core is the one answer to how long a prose box may be — the quick update (500), the recipe request (300), a pasted recipe (20,000) — and each page's handler refuses over-length input before its pre-check and before any charged call, with the cap named. The `maxlength` attributes are the courtesy.
 
 - **`docs/accuracy.png`** — verified 2026-10-07: the file exists (since 2026-07-12) and the README
   renders it. Nothing to do; the item was carried for months on a note that was itself stale.
