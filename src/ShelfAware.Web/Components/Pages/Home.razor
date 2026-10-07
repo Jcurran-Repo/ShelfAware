@@ -16,7 +16,8 @@
 @inject ILogger<Home> Logger
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
-@inject IDemoValve DemoValve
+@inject IManagedCallCaps DemoValve
+@inject ShelfAware.Core.Speech.IVoiceCredentials Voice
 
 <PageTitle>Reginald</PageTitle>
 
@@ -203,6 +204,7 @@ else
         <h2>Quick update</h2>
         <form @onsubmit="SendChat" @formname="quick-update">
             <input @bind="chatInput" @bind:event="oninput" placeholder="e.g. we're out of dog food, almost out of coffee"
+                   maxlength="@ShelfAware.Core.PromptInput.ChatMaxLength"
                    aria-label="Quick update — say what you bought or ran low on" disabled="@chatBusy" />
             @* Disabled on busy ONLY — not on an empty box. The browser's implicit form submission
                (Enter in the input) no-ops when the default submit button is disabled, and the
@@ -218,9 +220,15 @@ else
                 <p class="@(chatError ? "error" : "chat-reply")">@chatReply</p>
             }
         </div>
-        <div class="voice-divider"><span>or hold to talk</span></div>
-        <PushToTalk OnApplied="LoadAsync" />
-        <p class="muted small quick-update-hint">For a back-and-forth that keeps listening as you move around, use the 🎙 Assistant in the corner.</p>
+        @* The whole voice strip asks the ONE "can this box hear?" definition (IVoiceCredentials.Ear) the mic
+           controls themselves ask, so a deaf box shows neither a divider over an empty slot nor a sentence
+           pointing at an assistant that isn't in the corner. *@
+        @if (ShelfAware.Core.Speech.VoiceEar.CanHear(Voice.Ear))
+        {
+            <div class="voice-divider"><span>or hold to talk</span></div>
+            <PushToTalk OnApplied="LoadAsync" />
+            <p class="muted small quick-update-hint">For a back-and-forth that keeps listening as you move around, use the 🎙 Assistant in the corner.</p>
+        }
     </section>
 
     <details class="everything-else">
@@ -468,6 +476,14 @@ else
             // SOMETHING, or an active-looking button does nothing in silence.
             chatReply = "Say what you bought or ran low on first — e.g. \"we're out of coffee\".";
             chatError = false;
+            return;
+        }
+        // The server-side half of the input cap (the maxlength attribute is a courtesy a devtools edit
+        // removes): refused HERE, before the pre-check and before any charged call, with the cap named.
+        if (ShelfAware.Core.PromptInput.IsOverLength(chatInput, ShelfAware.Core.PromptInput.ChatMaxLength))
+        {
+            chatReply = ShelfAware.Core.PromptInput.TooLongMessage(ShelfAware.Core.PromptInput.ChatMaxLength);
+            chatError = true;
             return;
         }
         chatBusy = true;

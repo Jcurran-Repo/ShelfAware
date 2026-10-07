@@ -17,7 +17,7 @@
 @inject IIngredientAlternativesAdvisor AltAdvisor
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
-@inject IDemoValve DemoValve
+@inject IManagedCallCaps DemoValve
 @inject ShelfAware.Core.Speech.IVoiceCredentials Voice
 @inject Microsoft.Extensions.Configuration.IConfiguration Config
 @inject VoiceCoordinator Coordinator
@@ -59,6 +59,7 @@
     <h2>What can I make?</h2>
     <form @onsubmit="Suggest" @formname="recipe-request">
         <input @bind="request" @bind:event="oninput" placeholder="e.g. I'm feeling Mediterranean tonight"
+               maxlength="@ShelfAware.Core.PromptInput.RecipeRequestMaxLength"
                aria-label="Describe what you're in the mood for" disabled="@suggesting" />
         <button type="submit" disabled="@(suggesting || string.IsNullOrWhiteSpace(request))">
             @(suggesting ? "Thinking…" : "Get ideas")
@@ -1069,6 +1070,13 @@
     private async Task Suggest()
     {
         if (suggesting || string.IsNullOrWhiteSpace(request)) return;
+        // Server-side input cap, before the pre-check and the charged call (the maxlength attribute is a
+        // courtesy): the request is interpolated into the prompt untruncated, so its length is the cost.
+        if (ShelfAware.Core.PromptInput.IsOverLength(request, ShelfAware.Core.PromptInput.RecipeRequestMaxLength))
+        {
+            suggestError = ShelfAware.Core.PromptInput.TooLongMessage(ShelfAware.Core.PromptInput.RecipeRequestMaxLength);
+            return;
+        }
         suggesting = true;
         suggestError = null;
         // Phase 4c: don't attempt a call this circuit can't make — show why (out of credits / no key) and stop.
