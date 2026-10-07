@@ -175,3 +175,56 @@ public class TourScriptTests
             Assert.DoesNotContain(hero, step.Body, StringComparison.OrdinalIgnoreCase);
     }
 }
+
+/// <summary>The deaf-box variant (<see cref="TourStep.WhenDeaf"/>): a step must not promise an assistant
+/// or a listening cook-along on a box that renders no microphone affordance — the managed demo box's
+/// shape since 2026-09-21. Same rule as the managed variant, one deployment fact over.</summary>
+public class TourScriptDeafBoxTests
+{
+    private static readonly string[] ListeningPhrases = ["Assistant", "hands-free", "listening", "takes “next”"];
+
+    [Fact]
+    public void A_box_that_cannot_hear_is_never_promised_a_microphone()
+    {
+        foreach (var step in TourScript.Steps)
+        {
+            var body = step.BodyFor(managed: false, canHear: false);
+            foreach (var phrase in ListeningPhrases)
+                Assert.DoesNotContain(phrase, body, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public void Only_the_two_steps_that_mention_listening_carry_a_deaf_variant()
+    {
+        // Every other step reads the same whether or not the box can hear — it must not silently acquire
+        // a second voice (the rule A_step_without_a_managed_variant_reads_the_same_either_way holds for
+        // the managed axis).
+        var withVariant = TourScript.Steps.Where(s => s.WhenDeaf is not null).ToList();
+        Assert.Equal(2, withVariant.Count);
+        // ...and each of those two really does mention listening in its hearing-box copy.
+        Assert.All(withVariant, s => Assert.True(ListeningPhrases.Any(
+            phrase => s.Body.Contains(phrase, StringComparison.OrdinalIgnoreCase))));
+        foreach (var step in TourScript.Steps.Where(s => s.WhenDeaf is null))
+        {
+            Assert.Equal(step.Body, step.BodyFor(managed: false, canHear: false));
+            Assert.Equal(step.Title, step.TitleFor(managed: false, canHear: false));
+        }
+    }
+
+    [Fact]
+    public void A_hearing_box_reads_the_original_copy()
+    {
+        foreach (var step in TourScript.Steps)
+            Assert.Equal(step.BodyFor(managed: false), step.BodyFor(managed: false, canHear: true));
+    }
+
+    [Fact]
+    public void The_deaf_variant_keeps_the_half_of_the_step_that_is_still_true()
+    {
+        // The quick-update step still teaches typing; the recipes step still teaches read-aloud. Only the
+        // microphone half changes.
+        Assert.Contains("Type it the way", TourScript.Steps[1].BodyFor(managed: false, canHear: false), StringComparison.Ordinal);
+        Assert.Contains("read out loud", TourScript.Steps[4].BodyFor(managed: false, canHear: false), StringComparison.Ordinal);
+    }
+}
