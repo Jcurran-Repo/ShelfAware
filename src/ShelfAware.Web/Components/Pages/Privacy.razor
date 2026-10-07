@@ -1,0 +1,151 @@
+@page "/privacy"
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@layout AboutLayout
+@using Microsoft.Extensions.Options
+@using ShelfAware.Llm
+@using ShelfAware.Web.Auth
+@inject IOptions<LlmOptions> Llm
+@inject IOptions<EmailOptions> Email
+@inject IOptions<AdminOptions> Admin
+@inject IOptions<DemoOptions> Demo
+
+@* The data-handling statement: what this deployment stores, what leaves it, who can see what, and how
+   to get it out. Public and static (no circuit) like /about, on the same layout, so it can be read before
+   an account exists — Register links here. It describes the DEPLOYMENT it runs on, read from the same
+   options the code reads, so a self-hosted box and the managed demo each get the true version rather
+   than one paragraph that is wrong for the other. No legal boilerplate: a plain account of what the code
+   does, which is the only kind a reader can check against the source. *@
+
+<PageTitle>Privacy &amp; data — Reginald</PageTitle>
+
+<article class="about">
+    <section class="about-hero">
+        <h1>Privacy &amp; data</h1>
+        <p class="about-tagline">What this app keeps, what it sends out, and how you take it back.</p>
+    </section>
+
+    <section class="about-story">
+        <h2>What is stored on this server</h2>
+        <ul>
+            <li><strong>Your account:</strong> the email you signed up with, a hashed password, and when you
+                first and last signed in.</li>
+            <li><strong>Your household's pantry:</strong> products, purchases, out/low signals, counts,
+                expiration labels, recipes, grocery list, meal plans, tags, settings — and the receipts you
+                upload, as line items <em>and</em> as the original images, so a read can be checked or
+                retried. A receipt that could not be read is kept too, for the same reason.</li>
+            <li><strong>Bug reports you file,</strong> with the page snapshot you chose to include.</li>
+            <li><strong>Operator records:</strong> an error log (which can incidentally contain a file path or
+                a household id from a failing request), per-household AI usage counts, and the credit ledger
+                where billing is enabled.</li>
+        </ul>
+        <p>
+            Nothing is kept for analytics or advertising. There is no tracking script. The only cookies are
+            the sign-in cookie, the one that protects forms from forgery, and a five-second status message
+            between sign-in pages. Your theme and tour position live in your own browser.
+        </p>
+    </section>
+
+    <section class="about-story">
+        <h2>What leaves this server</h2>
+        @if (Llm.Value.IsManaged)
+        {
+            <p>
+                The AI features run on <strong>@Llm.Value.Provider</strong>, on a key whoever runs this
+                deployment provides. Each request sends only what that feature needs:
+            </p>
+        }
+        else
+        {
+            <p>
+                The AI features run on the provider <strong>you</strong> pick in Settings, on a key that stays
+                in your browser and rides each request to this server just long enough to make the call —
+                it is never written to a database or a log. Each request sends only what that feature needs:
+            </p>
+        }
+        <ul>
+            <li>reading a receipt sends the receipt image and the names of products you already have;</li>
+            <li>counting a shelf sends the shelf photos and your product names (the photos are not kept);</li>
+            <li>the assistant sends what you typed or said, with your product list and tags for context;</li>
+            <li>recipe ideas, imports and meal plans send the recipe text or photo and what's on hand.</li>
+        </ul>
+        <p>
+            A receipt can carry a merchant, a date, a card's last digits, or a delivery address — so this is
+            the one place personal data goes to a third party, and it is the reason the feature exists.
+            The provider's own retention terms apply to what it receives.
+        </p>
+        <p>
+            If voice features are switched on here, the audio you record goes to whichever speech engine
+            this deployment is configured with — a model running on this server, or a cloud service — and
+            the spoken replies are cached as audio files in your household's own folder.
+        </p>
+        <p>Nothing else is sent anywhere. The code is public, so this is checkable.</p>
+    </section>
+
+    <section class="about-story">
+        <h2>Who can see what</h2>
+        <ul>
+            <li><strong>Your household</strong> shares one pantry: everyone you invite sees everything in it,
+                and anyone in it can remove any member or delete all its data. Only share an invite code with
+                people you'd share the kitchen with.</li>
+            <li><strong>Other households</strong> cannot see yours. Every table is filtered by household on
+                read and refused on write.</li>
+            @if (Admin.Value.Configured)
+            {
+                <li><strong>The person running this server</strong> has an admin page showing account emails and
+                    sign-in times, the bug reports you file (with any snapshot you included), the error log, a
+                    recent-activity list (product and merchant names) and aggregate AI spend. It never shows
+                    an API key.</li>
+            }
+            else
+            {
+                <li><strong>The person running this server</strong> can read its databases directly, as with
+                    any self-hosted software. No admin page is configured here.</li>
+            }
+        </ul>
+    </section>
+
+    <section class="about-story">
+        <h2>How long it is kept</h2>
+        <p>
+            Until you delete it. Receipt images are not aged out. Where backups are configured, a nightly
+            copy of the databases and images is kept for a short fixed window and then overwritten, so
+            deleted data can persist in a backup for that window.
+        </p>
+    </section>
+
+    <section class="about-story">
+        <h2>Taking it back</h2>
+        <ul>
+            <li><strong>Export:</strong> Settings → Your data → <em>Download my data</em> gives you every
+                pantry record as JSON plus your receipt images, in a zip.</li>
+            <li><strong>Delete:</strong> Settings → <em>Delete all my data</em> removes the household's pantry,
+                receipt images, cached audio, recipe images, bug reports and API tokens in one transaction.</li>
+            <li><strong>What delete does not reach:</strong> your sign-in itself, the household record, and the
+                operator's usage and credit records. There is no self-service account deletion yet — ask
+                whoever runs this server to remove the account@(Email.Value.IsConfigured ? ", by replying to any email it has sent you" : "").</li>
+        </ul>
+    </section>
+
+    @if (Demo.Value.DailyGlobalCallLimit is not null)
+    {
+        <section class="about-story">
+            <h2>This is a shared demo box</h2>
+            <p>
+                It runs on a single hosted key with a daily allowance per household, a daily cap on the whole
+                box, and a limit on new accounts per day. The app tells you when one is hit. Treat it as a
+                place to try things, not as the only copy of anything you care about; see
+                <a href="https://github.com/Jcurran-Repo/ShelfAware/blob/master/SUPPORT.md">SUPPORT</a> for
+                what to expect and how to report a problem.
+            </p>
+        </section>
+    }
+
+    <section class="about-story">
+        <p class="muted">
+            Questions about any of this: open an issue on
+            <a href="https://github.com/Jcurran-Repo/ShelfAware">GitHub</a>, or use the bug-report link in
+            the app's footer once signed in.
+        </p>
+    </section>
+</article>

@@ -11,8 +11,9 @@
 @inject ILogger<SiteFooter> Logger
 
 <footer class="site-footer">
-    @* Always present: /about is a public page every visitor should be able to reach. *@
+    @* Always present: /about and /privacy are public pages every visitor should be able to reach. *@
     <a href="/about">About &amp; music</a>
+    <a href="/privacy">Privacy &amp; data</a>
     @if (Admin.Value.Configured)
     {
         @* The bug-report + admin links are gated on "an admin exists" — a report form on a deployment

@@ -9,6 +9,7 @@
 @inject IAccountEmailQueue EmailQueue
 @inject AuthDbContext Db
 @inject IOptions<AuthOptions> Auth
+@inject IOptions<DemoOptions> Demo
 @inject NavigationManager NavigationManager
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<Register> Logger
@@ -66,6 +67,18 @@
         </p>
     }
     <button type="submit" class="auth-submit">Create account</button>
+    <p class="muted small">
+        What this app stores, what its AI features send to the provider, and how to get your data out or
+        removed: <a href="privacy">Privacy &amp; data</a>.
+        @if (Demo.Value.DailyGlobalCallLimit is not null)
+        {
+            @* A configured box-wide valve is what makes this a shared demo box rather than a family one: the
+               daily AI allowance and the new-account cap are real, so a tester is told before the first
+               "come back tomorrow" rather than by it. No numbers — they are the operator's to tune. *@
+            @:This is a shared demo: AI features have a daily allowance per household and the box takes a
+            @:limited number of new accounts a day. The app says so if you hit either.
+        }
+    </p>
 </EditForm>
 
 <p class="muted auth-alt">Already have an account? <a href="Account/Login">Sign in</a></p>

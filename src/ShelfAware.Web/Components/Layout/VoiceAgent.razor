@@ -19,7 +19,7 @@
 @inject ITextToSpeech Tts
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
-@inject IDemoValve DemoValve
+@inject IManagedCallCaps DemoValve
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @inject VoiceCoordinator Coordinator
@@ -61,7 +61,7 @@
                 @foreach (var turn in history)
                 {
                     <p class="convo-user"><span class="who">You</span> @turn.User</p>
-                    <p class="convo-bot"><span class="who">Shelf&nbsp;Aware</span> @turn.Assistant</p>
+                    <p class="convo-bot"><span class="who">Reginald</span> @turn.Assistant</p>
                 }
                 @if (pendingUser is not null)
                 {
