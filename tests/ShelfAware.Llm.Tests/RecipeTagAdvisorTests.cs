@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Tagging;
 
 namespace ShelfAware.Llm.Tests;
 
@@ -57,6 +58,27 @@ public class RecipeTagAdvisorTests
     {
         var advisor = Advisor(FakeChatClient.Returning(Responses.Text("A, B, C, D, E, F, G")));
         Assert.Equal(5, (await advisor.SuggestAsync("Big One", NoIngredients, NoKnown)).Count); // MaxItems
+    }
+
+    [Fact]
+    public async Task Known_tags_are_bounded_and_ranked_against_the_recipe()
+    {
+        // ⚠️ The household's whole vocabulary used to ride into every charged call here, unbounded in its
+        // size. The bound is by nearness to the recipe — "Pasta" is listed last, where a plain Take would
+        // have dropped it, and ranks first because its spelling is an ingredient; what gives way is the
+        // far end of the fillers.
+        var fillers = Enumerable.Range(0, TagVocabulary.PromptVocabularyLimit + 10).Select(i => $"Filler {i:00}");
+        var known = fillers.Append("Pasta").ToList();
+        var chat = FakeChatClient.Returning(Responses.Text("Dinner"));
+
+        await Advisor(chat).SuggestAsync("Spaghetti", ["pasta", "tomato"], known);
+
+        var prompt = chat.ReceivedMessages[0].Last().Text;
+        var line = prompt.Split('\n').Single(l => l.StartsWith("Prefer these existing tags", StringComparison.Ordinal));
+        var listed = line[(line.IndexOf(':') + 1)..].TrimEnd('.').Split(',', StringSplitOptions.TrimEntries);
+        Assert.Equal(TagVocabulary.PromptVocabularyLimit, listed.Length);
+        Assert.Equal("Pasta", listed[0]);
+        Assert.DoesNotContain("Filler 49", listed);
     }
 
     [Fact]

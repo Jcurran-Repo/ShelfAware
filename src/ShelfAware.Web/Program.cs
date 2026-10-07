@@ -703,6 +703,10 @@ using (var scope = app.Services.CreateScope())
     db.Database.EnsureCreated();
     // Columns added after v3 shipped (EnsureCreated never alters an existing DB).
     AdditiveSchema.Apply(db);
+    // Strictly after the additive pass (which creates RecipeTags on a DB that predates it). One-off
+    // normalize-and-rewrite of the tag columns into TagVocabulary.StoredForm, so a pre-cap row written
+    // decomposed or padded is seen by dedup again — see the class.
+    TagStoredFormMigration.Apply(db, app.Logger);
 }
 
 // Behind a TLS-terminating reverse proxy (Tailscale Serve for the private self-host, Caddy on the

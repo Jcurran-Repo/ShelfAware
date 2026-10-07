@@ -221,8 +221,9 @@ public class TagVocabularyTests
 
         // ⚠️ The cost of that trade, asserted rather than left to a comment: a legacy entry stored in
         // DECOMPOSED form before the cap existed is over the cap raw and inside it once composed, so it
-        // drops out of dedup for that household. Canonicalize caps what it writes, so only pre-cap rows
-        // can be in this state — noted in docs/backlog.md.
+        // drops out of dedup for that household. Canonicalize writes the StoredForm, so only pre-cap rows
+        // can be in this state — and TagStoredFormMigration rewrites those once at boot, which is why
+        // this method can keep measuring raw: the skip is for rows that were never tags.
         var decomposed = string.Concat(Enumerable.Repeat("é", TagVocabulary.MaxLength - 10));
         Assert.True(TagVocabulary.IsOverLength(decomposed));
         Assert.True(decomposed.Normalize().Length <= TagVocabulary.MaxLength);
@@ -252,5 +253,135 @@ public class TagVocabularyTests
         // ⚠️ And the copy says what the guard does. Both screens that carried this sentence said "under
         // 64 characters" while the guard admits exactly 64 — a message contradicting the rule beside it.
         Assert.Contains($"{TagVocabulary.MaxLength} characters or fewer", TagVocabulary.TooLongMessage);
+    }
+
+    // ---- Script confusables (TR39's skeleton idea, the common subset) ----
+
+    [Fact]
+    public void A_cyrillic_lookalike_is_the_same_tag()
+    {
+        // The backlog's own example: "Ѕoda" opens with CYRILLIC CAPITAL LETTER DZE, drawn exactly
+        // as a Latin S. One word to anyone reading it, a brand-new tag to an ordinal comparison — and on
+        // the recipe path the coinage is a silent write. Both directions, like the Unicode-form test.
+        Assert.Equal("Soda", TagVocabulary.FindNearDuplicate("Ѕoda", ["Soda"]));
+        Assert.Equal("Ѕoda", TagVocabulary.FindNearDuplicate("Soda", ["Ѕoda"]));
+    }
+
+    [Theory]
+    [InlineData("Pаper Goods", "Paper Goods")]   // Cyrillic а
+    [InlineData("Prοtein", "Protein")]           // Greek ο
+    [InlineData("Саnned", "Canned")]         // two Cyrillic letters, a space-free word
+    public void A_mixed_script_lookalike_folds_to_the_latin_tag(string lookalike, string latin) =>
+        Assert.Equal(latin, TagVocabulary.FindNearDuplicate(lookalike, [latin]));
+
+    [Fact]
+    public void A_genuinely_cyrillic_tag_keeps_its_own_letters()
+    {
+        // "Сода" — С and о are confusables, but д is not and is not Latin, so this is a Cyrillic word and
+        // the fold stays out of it: its key is itself, lowercased, and it is not a near-duplicate of
+        // "Soda". Folding it would make a Russian-speaking household's tags collide with English ones.
+        Assert.Equal("сода", TagVocabulary.MatchKey("Сода"));
+        Assert.Null(TagVocabulary.FindNearDuplicate("Сода", ["Soda"]));
+    }
+
+    [Fact]
+    public void A_genuinely_greek_tag_keeps_its_own_letters()
+    {
+        // "Νερό" — Ν is a confusable, ε, ρ and ό are not.
+        Assert.Equal("νερό", TagVocabulary.MatchKey("Νερό"));
+        Assert.Null(TagVocabulary.FindNearDuplicate("Νερό", ["Nero"]));
+    }
+
+    [Theory]
+    [InlineData("а", "a")]  // Cyrillic a
+    [InlineData("Е", "e")]  // Cyrillic IE, capital — folds to E, then lowercases like any tag
+    [InlineData("ѕ", "s")]  // Cyrillic dze
+    [InlineData("ԁ", "d")]  // Cyrillic komi de
+    [InlineData("Ӏ", "i")]  // Cyrillic palochka, capital
+    [InlineData("ӏ", "l")]  // Cyrillic palochka
+    [InlineData("ԝ", "w")]  // Cyrillic we
+    [InlineData("ո", "n")]  // Armenian vo
+    [InlineData("ɡ", "g")]  // Latin script g — Latin already, folded to the ordinary g
+    [InlineData("Β", "b")]  // Greek Beta
+    [InlineData("ο", "o")]  // Greek omicron
+    [InlineData("ν", "v")]  // Greek nu
+    public void Each_confusable_folds_to_its_latin_twin(string confusable, string latin) =>
+        // A one-letter string has no other letters to make it "another script", so it folds — the
+        // vacuous case of "every other letter is Latin", stated here so it is a decision and not a slip.
+        Assert.Equal(latin, TagVocabulary.MatchKey(confusable));
+
+    [Theory]
+    [InlineData("ʯ")]  // the last letter of the Basic-Latin-through-IPA run
+    [InlineData("Ḁ")]  // the first of Latin Extended Additional
+    [InlineData("ỿ")]  // and its last
+    public void A_latin_letter_at_the_edge_of_its_block_does_not_block_the_fold(string latin) =>
+        Assert.Equal(latin.ToLowerInvariant() + "a", TagVocabulary.MatchKey(latin + "а"));
+
+    [Theory]
+    [InlineData("ʰ")]  // the modifier letter just past the Latin run
+    [InlineData("ἀ")]  // Greek Extended, just past Latin Extended Additional
+    public void A_letter_just_outside_the_latin_blocks_blocks_the_fold(string other) =>
+        Assert.Equal((other + "а").ToLowerInvariant(), TagVocabulary.MatchKey(other + "а"));
+
+    [Theory]
+    [InlineData("Ѕoda")]
+    [InlineData("Café")]
+    [InlineData("Pаper  Goods")]
+    [InlineData("Сода")]
+    [InlineData("Νερό")]
+    [InlineData("Condiment")]
+    public void The_key_of_a_key_is_the_key(string tag)
+    {
+        // The fold, the collapse, the confusable skeleton and the lowercase are all fixed points, so
+        // keying twice is keying once. (The plural drop is the one deliberate exception — "glass" keys
+        // to "glas" — and no key is ever re-keyed; these inputs do not end in a plural s.)
+        var key = TagVocabulary.MatchKey(tag);
+        Assert.Equal(key, TagVocabulary.MatchKey(key));
+    }
+
+    // ---- The stored form ----
+
+    [Fact]
+    public void The_stored_form_is_trimmed_collapsed_and_composed()
+    {
+        // Casing is kept — this is what the household sees — but the padding, the run of spaces and the
+        // decomposed accent are not part of the tag, and its raw length must be its keyed length.
+        Assert.Equal("Café Goods", TagVocabulary.StoredForm("  Café   Goods "));
+        var stored = TagVocabulary.StoredForm("  Café   Goods ");
+        Assert.Equal(stored, TagVocabulary.StoredForm(stored));
+    }
+
+    [Fact]
+    public void Canonicalize_writes_the_stored_form()
+    {
+        // ⚠️ The write path and the boot pass must agree on the form, or the pass would rewrite on every
+        // boot whatever the app wrote the day before.
+        Assert.Equal("Café", TagVocabulary.Canonicalize("Café", [], []));
+        Assert.Equal("Paper Goods", TagVocabulary.Canonicalize("Paper   Goods", [], []));
+    }
+
+    [Fact]
+    public void A_stored_form_that_cannot_be_normalized_is_kept_as_written() =>
+        Assert.Equal("Soda\ud83d", TagVocabulary.StoredForm(" Soda\ud83d "));
+
+    [Fact]
+    public void Text_too_long_in_any_form_is_refused_without_normalizing()
+    {
+        // The linear pre-check the boot pass asks before it pays for a normal form: nothing composes
+        // more than MaxCanonicalExpansion to one, so text past that multiple of the cap is over it in
+        // every form. Exactly at the multiple it could still fit, so it is not refused.
+        var limit = TagVocabulary.MaxLength * TagVocabulary.MaxCanonicalExpansion;
+        Assert.False(TagVocabulary.IsOverLengthInAnyForm(new string('x', limit)));
+        Assert.True(TagVocabulary.IsOverLengthInAnyForm(new string('x', limit + 1)));
+
+        // Whitespace is the one shrink composition never makes, so it is collapsed before measuring.
+        Assert.False(TagVocabulary.IsOverLengthInAnyForm("a" + new string(' ', limit * 10) + "b"));
+
+        // And the row the pass exists for — decomposed, over the cap raw, inside it composed — is not
+        // refused; its stored form is a tag.
+        var decomposed = string.Concat(Enumerable.Repeat("é", TagVocabulary.MaxLength));
+        Assert.True(TagVocabulary.IsOverLength(decomposed));
+        Assert.False(TagVocabulary.IsOverLengthInAnyForm(decomposed));
+        Assert.False(TagVocabulary.IsOverLength(TagVocabulary.StoredForm(decomposed)));
     }
 }

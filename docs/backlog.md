@@ -48,26 +48,12 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   `A_failed_money_write_costs_that_call_not_the_whole_action`); and `CheckAiAsync` becomes a preview beside
   the write that enforces. Its own PR, on the PC, after those are decided. **Revisit if a balance is ever
   seen materially negative.**
-- **Tag dedup does not see through Unicode confusables.** `TagVocabulary.Normalize` now folds to one
-  Unicode normal form, so a precomposed "Café" and a decomposed one are the same tag. A Cyrillic "Ѕoda"
-  against "Soda" is still a new tag. That needs a confusable *skeleton* mapping rather than a normal
-  form, and the blast radius is small and household-local: the advisor can only ever return an element
-  of that household's own list. On the receipt path the result is a suggestion the user accepts or
-  overrides; on the recipe path `RecipeTagService.SuggestAndApplyAsync` applies and saves it with no
-  confirmation step, so there it IS a silent write — the first version of this note claimed otherwise.
-  Raised by the pre-merge security gate, 2026-09-19.
 - **A handful of invisible code points still read as an "answer" and are charged.** `ProviderReply`'s
   allow-list excludes marks, punctuation, separators, controls and the replacement character, but a
   Hangul filler (category `Lo`) and BRAILLE PATTERN BLANK (`So`) are categorically letters and symbols
   while rendering as nothing. Left alone deliberately: a model emitting only one of those is not a shape
   anyone has seen, and chasing every invisible code point by hand is how the deny-list this replaced got
   it wrong. Revisit if a real reply ever lands in that gap. Raised by the pre-merge code gate, 2026-09-19.
-- **Advisor prompts interpolate the household's whole vocabulary with no cap.** `AnthropicTagAdvisor`
-  joins every existing tag into the prompt, the tag input on `/receipt` has no `maxlength`, and
-  `AnthropicRecipeTagAdvisor` and `AnthropicPantryChat` do the same with known tags and the full product
-  list. That is an unbounded per-call input-token cost the household controls, and it is what makes a
-  provider timeout reachable on purpose rather than by luck. Pre-existing; raised 2026-09-19.
-
 - **Re-record `docs/demo.gif`** — optional polish, not a gap. It has existed since 2026-07-12
   (`5f34b24`), but it pre-dates every feature from v3.5 on: variety, expiration, Reports, the whole
   counting arc, the census, the tour. A re-record needs a NEW capture plan first — the original
@@ -89,23 +75,6 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   with the review-gate pass on phase 7 written up in its §9. What's left out of that arc is deliberate:
   draining logic out of `.razor` (D1) and EF Migrations (D3), both with reasons in §8.
 
-- **A pre-cap tag stored in decomposed form drops out of dedup.** `FindNearDuplicate` skips a vocabulary
-  entry whose RAW length is over `TagVocabulary.MaxLength`, measured raw on purpose — the cost it bounds
-  is the cost of normalizing, so a cap that normalized first to decide would have already paid it. But
-  `Normalize` shrinks (NFC composes, whitespace collapses), so a legacy tag written before the cap
-  existed — 33 decomposed "é" is 66 characters raw and 33 composed — is inside the cap once normalized
-  and is skipped anyway. That household's dedup stops seeing it and the tag cloud can fragment on a
-  difference nobody can see, which is the exact thing `Normalize` was added to prevent. `Canonicalize`
-  caps what it writes, so only pre-cap rows can be in this state. Pinned by
-  `An_entry_whose_raw_form_is_over_the_cap_is_not_a_dedup_target`. The fix is a one-off normalize-and-
-  rewrite pass over the tag column, which wants EF Migrations (D3) first.
-- **The advisor prompt caps each tag's length but not the tag COUNT.** `AnthropicTagAdvisor` interpolates
-  the whole vocabulary on every tag add, so a household with N tags sends N × 64 bytes per charged call,
-  unbounded in N. Self-inflicted and behind the credit gate, so not the denial of service the candidate
-  cap closed — but the "untrusted input to a charged call" axis is not fully shut until it is bounded.
-  A plain `.Take(…)` silently degrades dedup quality for exactly the households with the most tags, which
-  is the wrong trade; the honest fix is to send the nearest-N by the cheap matcher, which is a change to
-  what the advisor is asked, not just how much.
 - **Four pages cannot be read by the razor lift the build rules use.** `MainLayout`, `Accuracy`,
   `GroceryList` and `MealPlanPage` each define a `RenderFragment` with a razor TEMPLATE expression
   (`=> @<div>…`), which the razor compiler turns into C# but a plain brace-match lift cannot. They are
@@ -209,6 +178,10 @@ matter how many PRs merge. It looks green. The one-line fix is on GitHub, not in
 
 ## Recently closed
 
+- **Tag dedup does not see through Unicode confusables.** — closed 2026-10-07. `TagVocabulary.MatchKey` folds the common Cyrillic and Greek lookalikes (a TR39-style skeleton, the common subset not the full table) to their Latin twins — only when every other letter in the tag is Latin, so a genuinely Cyrillic or Greek tag keeps its own letters. "Ѕoda" ≈ "Soda" is pinned, both directions, in `TagVocabularyTests`.
+- **Advisor prompts interpolate the household's whole vocabulary with no cap.** — closed 2026-10-07. `TagVocabulary.NearestForPrompt` ranks the vocabulary by edit distance between match keys to the candidate (or, for the recipe tag advisor, to the recipe's name and ingredients) and sends the nearest `PromptVocabularyLimit` (40) — not a `.Take`, so the households with the most tags keep their dedup quality. The reply is resolved against the list the model saw, and a vocabulary with no tag-sized entry skips the charged call. `TagPromptRankingTests`, plus prompt-shape tests in both advisor suites.
+- **The advisor prompt caps each tag's length but not the tag COUNT.** — closed 2026-10-07. Same change as the vocabulary entry above: bounded at `PromptVocabularyLimit` by nearest-N, in Core.
+- **A pre-cap tag stored in decomposed form drops out of dedup.** — closed 2026-10-07. `TagStoredFormMigration` runs at boot strictly after `AdditiveSchema.Apply`, in one transaction over `ProductTags` and `RecipeTags` across households (raw SQL, not a fifth `IgnoreQueryFilters` site): every value is rewritten to `TagVocabulary.StoredForm` (trimmed, whitespace-collapsed, NFC), a collision on the same owner keeps the earlier row, anything over the cap in any form is left alone and counted, and a second boot rewrites nothing. `Canonicalize` now writes the stored form too, so no new row can need it. Eleven tests in `TagStoredFormMigrationTests`.
 - **The TTS cache is trimmed only at startup, and a free voice fills it ~10× faster.** — closed 2026-10-07. `SpeechCacheBudget` keeps a lock-free running byte total per household (seeded by one scan on the household's first write after boot); a write that crosses `Speech:CacheMegabytes` claims the household's one trim slot and runs the existing eviction sweep detached from the request, which re-measures the drawer and corrects the total. The common case is an interlocked add and a compare — no directory scan on the hot path, which was the cost that parked it. The boot trim is unchanged. Ten tests in `CachingTextToSpeechTests`.
 - **A per-size Trends price chart** — closed 2026-10-07. `PriceSeries.BySize` is the one definition of a product's price series by size, ranked most-bought first; `Dominant` is now defined as its head, so Product Detail's one-size chart and Trends' every-size rows agree by construction. Trends renders one row per (product, size); the year's spend stays per product and spans its size rows. Six Core tests, three bUnit tests.
 - **Eggs' suit buttons are misaligned — realign on EVERY icon** — closed 2026-10-07. Both buttons centred at `cx=256`, `cy=352/372` in `shelfaware-icon.svg` and `EggsMascot.razor` (the two sibling SVGs already had them there); the three served PNGs re-rasterised from the corrected source. `docs/icons/README.md` records the placement.
