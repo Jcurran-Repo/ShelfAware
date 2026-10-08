@@ -70,13 +70,13 @@
     <p class="muted small">
         What this app stores, what its AI features send to the provider, and how to get your data out or
         removed: <a href="privacy">Privacy &amp; data</a>.
-        @if (Demo.Value.DailyGlobalCallLimit is not null)
+        @if (Demo.Value.IsSharedDemo)
         {
-            @* A configured box-wide valve is what makes this a shared demo box rather than a family one: the
-               daily AI allowance and the new-account cap are real, so a tester is told before the first
-               "come back tomorrow" rather than by it. No numbers — they are the operator's to tune. *@
-            @:This is a shared demo: AI features have a daily allowance per household and the box takes a
-            @:limited number of new accounts a day. The app says so if you hit either.
+            @* A tester is told before the first "come back tomorrow" rather than by it. Each limit named is
+               read from its own setting — the box-wide valve proves the AI limit, not the account cap. No
+               numbers: they are the operator's to tune. *@
+            @:This is a shared demo: AI features have daily limits@(Auth.Value.EffectiveDailyAccountCreationLimit is not null ? " and the box takes a limited number of new accounts a day" : "").
+            @:The app says so if you hit one.
         }
     </p>
 </EditForm>

@@ -72,8 +72,8 @@ recipes, settings — belongs to a *household*. My wife and I each have our own 
 pantry (she joined with an invite code from Settings); anyone else who registers gets a completely
 separate one. A deployment can also close sign-ups with one config flag and stay invite-only.
 And because it's your data, Settings will hand you all of it as a JSON download, or wipe the
-household's pantry — products, receipts and their images, recipes, the lot — in one transaction, any
-time. (What that leaves behind, and why: the account itself and the server's own usage records; the
+household's pantry — products, receipts and their images, recipes, the lot — any time: the records
+in one transaction, the stored files straight after. (What that leaves behind, and why: the account itself and the server's own usage records; the
 [privacy page](src/ShelfAware.Web/Components/Pages/Privacy.razor) spells it out.)
 
 ---

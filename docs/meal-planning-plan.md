@@ -313,7 +313,7 @@ each read from planned meals + current stock.
 
 Once calorie/protein/carb targets are on, the app shows **AI-estimated** nutrition for generated meals
 — rough numbers. Present them as estimates (the way recipes already carry a label-check disclaimer),
-never as precise counts. This is a weight-loss tool; a hallucinated "420 kcal" quietly steering the
+never as precise counts. Calorie numbers can steer real choices; a hallucinated "420 kcal" quietly steering the
 week is the failure to avoid. `Recipe.EstimatedCaloriesPerServing` (nullable, already exists) is the
 field.
 

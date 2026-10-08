@@ -9,6 +9,7 @@
 @inject IOptions<EmailOptions> Email
 @inject IOptions<AdminOptions> Admin
 @inject IOptions<DemoOptions> Demo
+@inject IOptions<AuthOptions> Auth
 
 @* The data-handling statement: what this deployment stores, what leaves it, who can see what, and how
    to get it out. Public and static (no circuit) like /about, on the same layout, so it can be read before
@@ -35,6 +36,8 @@
                 upload, as line items <em>and</em> as the original images, so a read can be checked or
                 retried. A receipt that could not be read is kept too, for the same reason.</li>
             <li><strong>Bug reports you file,</strong> with the page snapshot you chose to include.</li>
+            <li><strong>The About page's "notify me" list:</strong> the plan you clicked and, only if you typed
+                one, your email address — no account needed, and nothing else about you.</li>
             <li><strong>Operator records:</strong> an error log (which can incidentally contain a file path or
                 a household id from a failing request), per-household AI usage counts, and the credit ledger
                 where billing is enabled.</li>
@@ -92,8 +95,9 @@
                 read and refused on write.</li>
             @if (Admin.Value.Configured)
             {
-                <li><strong>The person running this server</strong> has an admin page showing account emails and
-                    sign-in times, the bug reports you file (with any snapshot you included), the error log, a
+                <li><strong>The person running this server</strong> has an admin page showing account emails, sign-in
+                    times and counts, who is online now, household names and their members, the "notify me"
+                    emails, the bug reports you file (with any snapshot you included), the error log, a
                     recent-activity list (product and merchant names) and aggregate AI spend. It never shows
                     an API key.</li>
             }
@@ -120,20 +124,22 @@
             <li><strong>Export:</strong> Settings → Your data → <em>Download my data</em> gives you every
                 pantry record as JSON plus your receipt images, in a zip.</li>
             <li><strong>Delete:</strong> Settings → <em>Delete all my data</em> removes the household's pantry,
-                receipt images, cached audio, recipe images, bug reports and API tokens in one transaction.</li>
+                bug reports and settings in one transaction, then its receipt images, cached audio and recipe
+                images from disk and its API tokens.</li>
             <li><strong>What delete does not reach:</strong> your sign-in itself, the household record, and the
                 operator's usage and credit records. There is no self-service account deletion yet — ask
                 whoever runs this server to remove the account@(Email.Value.IsConfigured ? ", by replying to any email it has sent you" : "").</li>
         </ul>
     </section>
 
-    @if (Demo.Value.DailyGlobalCallLimit is not null)
+    @if (Demo.Value.IsSharedDemo)
     {
         <section class="about-story">
             <h2>This is a shared demo box</h2>
             <p>
-                It runs on a single hosted key with a daily allowance per household, a daily cap on the whole
-                box, and a limit on new accounts per day. The app tells you when one is hit. Treat it as a
+                Its AI features have daily limits@(Auth.Value.EffectiveDailyAccountCreationLimit is not null
+                    ? ", and it takes a limited number of new accounts a day" : ""). The app tells you when one
+                is hit. Treat it as a
                 place to try things, not as the only copy of anything you care about; see
                 <a href="https://github.com/Jcurran-Repo/ShelfAware/blob/master/SUPPORT.md">SUPPORT</a> for
                 what to expect and how to report a problem.

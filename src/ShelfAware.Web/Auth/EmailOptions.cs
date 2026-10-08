@@ -36,6 +36,18 @@ public class EmailOptions
     /// request path — the page's response is unchanged — so it adds no account-enumeration oracle.</summary>
     public int PerRecipientCooldownSeconds { get; set; } = 60;
 
+    /// <summary>THE wording of <see cref="PerRecipientCooldownSeconds"/> for a page promising when another
+    /// link can be asked for ("minute", "90 seconds", "2 minutes") — read from the option the queue
+    /// enforces, so the promise and the drop can't drift apart. Null when the cooldown is off: there is
+    /// nothing to wait for, and "one link per 0 seconds" is not a sentence.</summary>
+    public string? CooldownPhrase() => PerRecipientCooldownSeconds switch
+    {
+        <= 0 => null,
+        60 => "minute",
+        var s when s % 60 == 0 => $"{s / 60} minutes",
+        var s => $"{s} seconds",
+    };
+
     /// <summary>The most account mails to send box-wide in one day, or null (the default) for no limit. Set
     /// it on a PUBLIC box below the sending account's own quota (e.g. a Gmail app password is ~500/day) so a
     /// flood of registration/reset requests can't exhaust the provider — which would silently break
