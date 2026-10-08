@@ -185,6 +185,49 @@ public class TagAdvisorTests
     }
 
     [Fact]
+    public async Task The_prompt_carries_at_most_the_vocabulary_limit_and_the_nearest_tag_is_among_them()
+    {
+        // ⚠️ Bounded by NEARNESS, not by position. The nearest tag is listed last, where a plain Take
+        // would have dropped it; what gives way is the far end of the vocabulary. The whole list used to
+        // ride into every charged call, N × 64 bytes, unbounded in N.
+        var fillers = Enumerable.Range(0, TagVocabulary.PromptVocabularyLimit + 10).Select(i => $"Filler {i:000}");
+        var existing = fillers.Append("Sodium").ToList();
+        var chat = FakeChatClient.Returning(Responses.Text("NONE"));
+
+        await Advisor(chat).FindSynonymAsync("Soda", existing);
+
+        var prompt = chat.ReceivedMessages[0].Last().Text;
+        var listed = prompt.Split('\n').Where(l => l.StartsWith("- ", StringComparison.Ordinal)).ToList();
+        Assert.Equal(TagVocabulary.PromptVocabularyLimit, listed.Count);
+        Assert.Contains("- Sodium", listed);
+        Assert.DoesNotContain($"- Filler {TagVocabulary.PromptVocabularyLimit + 9:000}", listed); // the last-listed filler
+    }
+
+    [Fact]
+    public async Task A_reply_is_read_against_the_tags_the_model_was_shown()
+    {
+        // The model was asked to name one of the tags in its prompt, so its answer resolves against that
+        // list — and the spelling that comes back is the household's, however the model cased it.
+        var fillers = Enumerable.Range(0, TagVocabulary.PromptVocabularyLimit + 10).Select(i => $"Filler {i:000}");
+        var existing = fillers.Append("Sodium").ToList();
+
+        Assert.Equal("Sodium", await Advisor(FakeChatClient.Returning(Responses.Text("sodium")))
+            .FindSynonymAsync("Soda", existing));
+    }
+
+    [Fact]
+    public async Task A_vocabulary_with_no_tag_sized_entry_is_not_worth_a_call()
+    {
+        // Every entry is past the cap, so there is nothing the candidate could be a synonym OF — and a
+        // call with an empty list can only come back NONE, which would be a credit spent on nothing.
+        var chat = new FakeChatClient();  // no scripted response: any call at all throws
+        var monster = new string('x', TagVocabulary.MaxLength + 1);
+
+        Assert.Null(await Advisor(chat).FindSynonymAsync("Soda", [monster]));
+        Assert.Equal(0, chat.CallCount);
+    }
+
+    [Fact]
     public async Task A_blank_candidate_or_empty_vocabulary_short_circuits_without_a_call()
     {
         var client = FakeChatClient.Returning(Responses.Text("unused"));

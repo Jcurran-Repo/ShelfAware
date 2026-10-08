@@ -37,17 +37,22 @@ public class AnthropicTagAdvisor : ITagAdvisor
         // amplifier on a box that pays for its own tokens. A guard on the screen alone is one edit away
         // from being gone; this one no caller can reopen.
         if (TagVocabulary.IsOverLength(candidate)) return null;
+        // ⚠️ The COUNT is bounded as well as each entry's length. This line used to interpolate every tag
+        // the household had, so a vocabulary of N tags sent N × 64 bytes on every charged call, unbounded
+        // in N — self-inflicted and behind the credit gate, but the one input to this call whose size the
+        // household controls. The bound sits far past any real vocabulary, because a synonym's spelling
+        // is usually NOT near (see TagVocabulary.PromptVocabularyLimit); only a pathological vocabulary is
+        // trimmed, and then by nearness rather than by position. Entries past the tag cap are
+        // left out there too, at the same predicate every other site asks — this line once carried its
+        // own copy of that arithmetic, untrimmed, the one copy that was different.
+        var sent = TagVocabulary.NearestForPrompt(candidate, existing);
+        if (sent.Count == 0) return null; // nothing to be a synonym of — not worth a charged call
         await using var action = AiActionScope.Begin(ServiceAction.TagSuggest);
         try
         {
             var prompt =
                 $"A grocery app tags products. The user is creating a new tag: \"{candidate.Trim()}\".\n" +
-                // Entries past the cap are not tags (see TagVocabulary.IsOverLength) and a stored one
-                // would otherwise ride into every prompt untruncated, on an act priced at a flat credit.
-                // ⚠️ The shared predicate. This line was written as `e.Length <= MaxLength` — untrimmed,
-                // where every other site measures the trimmed form — in the same commit whose comment in
-                // TagVocabulary said a third arithmetic here would be the same defect again.
-                "Existing tags:\n- " + string.Join("\n- ", existing.Where(e => !TagVocabulary.IsOverLength(e))) + "\n\n" +
+                "Existing tags:\n- " + string.Join("\n- ", sent) + "\n\n" +
                 "If the new tag means essentially the SAME thing as one of the existing tags (a synonym — " +
                 "e.g. \"Soda\" and \"Soft Drink\", \"Cleaner\" and \"Detergent\"), reply with that existing " +
                 "tag EXACTLY as written above and nothing else. If it is genuinely different, reply with only: NONE";
@@ -77,8 +82,11 @@ public class AnthropicTagAdvisor : ITagAdvisor
             //
             // The exact spelling still wins where there is one, so a household holding both "Etc" and
             // "Etc." gets back the one the model actually named rather than the first near-duplicate.
-            return existing.FirstOrDefault(t => string.Equals(t, reply, StringComparison.OrdinalIgnoreCase))
-                ?? TagVocabulary.FindNearDuplicate(reply, existing);
+            //
+            // Resolved against the list the model SAW, not the whole vocabulary: it was asked to name one
+            // of those, so that is the only list its answer can honestly be read against.
+            return sent.FirstOrDefault(t => string.Equals(t, reply, StringComparison.OrdinalIgnoreCase))
+                ?? TagVocabulary.FindNearDuplicate(reply, sent);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
         catch (Exception ex)

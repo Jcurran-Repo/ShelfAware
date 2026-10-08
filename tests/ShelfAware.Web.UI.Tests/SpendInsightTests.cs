@@ -5,11 +5,11 @@ using ShelfAware.Web.Components.Pages;
 namespace ShelfAware.Web.UI.Tests;
 
 /// <summary>
-/// The Trends page: tickers compare like with like (only the dominant size bucket's prices form a
-/// series — $/bag beside $/lime once read as a 3,100% price increase), grocery change semantics
-/// (up is red: it costs more), spend summed from receipt prices into calendar windows, and the
-/// forecast honoring a fresh count (a suppressed item's next buy steps from when the count runs
-/// out, not from a due date the app is telling the user to ignore).
+/// The Trends page: tickers compare like with like (each size bucket's prices form their OWN series,
+/// one row per size, most-bought first — $/bag beside $/lime once read as a 3,100% price increase),
+/// grocery change semantics (up is red: it costs more), spend summed from receipt prices into
+/// calendar windows, and the forecast honoring a fresh count (a suppressed item's next buy steps
+/// from when the count runs out, not from a due date the app is telling the user to ignore).
 /// </summary>
 public class SpendInsightTests : PageTestContext
 {
@@ -56,9 +56,9 @@ public class SpendInsightTests : PageTestContext
     }
 
     [Fact]
-    public void The_ticker_charts_only_the_dominant_size_and_labels_it()
+    public void The_most_bought_size_leads_the_ticker_and_its_change_stays_within_that_size()
     {
-        // Two bag purchases and a loose lime: the series is the BAG's two prices — the lime's
+        // Two bag purchases and a loose lime: the FIRST row is the BAG's two prices — the lime's
         // $0.25 in the same series would render a cliff and a four-digit "change".
         SeedPriced("Limes",
             (Today.AddDays(-40), 7.00m, "2 lb bag"),
@@ -67,12 +67,67 @@ public class SpendInsightTests : PageTestContext
         var cut = RenderTrends();
 
         var row = cut.Find("tbody tr");
-        Assert.NotNull(row.QuerySelector(".size-chip")); // mixed sizes → the charted size is NAMED
+        Assert.Equal("2 lb bag", row.QuerySelector(".size-chip")!.TextContent); // mixed sizes → the charted size is NAMED
         // Change compares within the bucket: 7.00 → 8.00 = +14.3%, red, pointing up.
         var change = row.QuerySelector(".change-up")!;
         Assert.Contains("▲", change.TextContent);
         Assert.Contains("14.3%", change.TextContent);
         Assert.Contains((8.00m).ToString("C"), row.TextContent); // current = the bucket's latest
+    }
+
+    [Fact]
+    public void A_mixed_size_product_gets_one_series_per_size_each_labelled()
+    {
+        // The per-size sibling of the PR #37 fix: the half-gallon is a second price story, not a
+        // dip in the gallon's line. Each size gets its own row — name, size, sparkline, current,
+        // change — most-bought first, so the first row is the series Product Detail charts.
+        SeedPriced("Whole Milk",
+            (Today.AddDays(-30), 3.49m, "1 gal"),
+            (Today.AddDays(-15), 3.59m, "1 gal"),
+            (Today.AddDays(-20), 2.29m, "64 fl oz"),
+            (Today.AddDays(-5), 2.49m, "64 fl oz"),
+            (Today.AddDays(-2), 3.69m, "1 gal"));
+        var cut = RenderTrends();
+
+        var rows = cut.FindAll("tbody tr");
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.Contains("Whole Milk", r.QuerySelector("a")!.TextContent));
+        Assert.Equal(["1 gal", "64 fl oz"], rows.Select(r => r.QuerySelector(".size-chip")!.TextContent));
+
+        // Each row is ONE size's story: its own series, latest price, and move.
+        var charts = rows.Select(r => r.QuerySelector("svg.linechart")!).ToList();
+        Assert.Equal("Whole Milk price history, 1 gal size", charts[0].GetAttribute("aria-label"));
+        Assert.Equal("Whole Milk price history, 64 fl oz size", charts[1].GetAttribute("aria-label"));
+        Assert.Equal(3, charts[0].QuerySelector("polyline")!.GetAttribute("points")!.Split(' ').Length); // three gallon trips
+        Assert.Equal(2, charts[1].QuerySelector("polyline")!.GetAttribute("points")!.Split(' ').Length); // two half-gallon trips
+        Assert.Contains((3.69m).ToString("C"), rows[0].TextContent);
+        Assert.Contains("2.8%", rows[0].QuerySelector(".change-up")!.TextContent);   // 3.59 → 3.69
+        Assert.Contains((2.49m).ToString("C"), rows[1].TextContent);
+        Assert.Contains("8.7%", rows[1].QuerySelector(".change-up")!.TextContent);   // 2.29 → 2.49
+    }
+
+    [Fact]
+    public void Spend_is_the_products_whole_year_and_spans_its_size_rows()
+    {
+        // Spend is not split by size: a purchase priced from the all-sizes estimate has no size
+        // series to sit on, and repeating the total per row would read as double. The product's
+        // figure appears ONCE, spanning both rows, and a single-size product's row has no span.
+        SeedPriced("Whole Milk",
+            (Today.AddDays(-10), 3.49m, "1 gal"),
+            (Today.AddDays(-3), 3.59m, "1 gal"),
+            (Today.AddDays(-1), 2.29m, "64 fl oz"));
+        var cut = RenderTrends();
+
+        var rows = cut.FindAll("tbody tr");
+        Assert.Equal(2, rows.Count);
+        var spend = rows[0].QuerySelectorAll("td")[^1];
+        Assert.Equal("2", spend.GetAttribute("rowspan"));
+        // The fixture computes the same calendar-year window the page renders: the assertion is the
+        // one-figure-for-every-size SUM, not the calendar.
+        var expected = new[] { (Date: Today.AddDays(-10), Price: 3.49m), (Date: Today.AddDays(-3), Price: 3.59m), (Date: Today.AddDays(-1), Price: 2.29m) }
+            .Where(b => b.Date.Year == Today.Year).Sum(b => b.Price);
+        Assert.Equal(expected.ToString("C"), spend.TextContent.Trim());
+        Assert.Equal(5, rows[1].QuerySelectorAll("td").Length); // the second size row carries no spend cell
     }
 
     [Fact]
@@ -83,8 +138,10 @@ public class SpendInsightTests : PageTestContext
             (Today.AddDays(-10), 3.00m, "32 oz"));
         var cut = RenderTrends();
 
-        var row = cut.Find("tbody tr");
+        var row = Assert.Single(cut.FindAll("tbody tr")); // one size — one series, one row
         Assert.Null(row.QuerySelector(".size-chip")); // one size — a label would be noise
+        Assert.Equal("Yogurt price history", row.QuerySelector("svg.linechart")!.GetAttribute("aria-label"));
+        Assert.Null(row.QuerySelectorAll("td")[^1].GetAttribute("rowspan")); // nothing to span
         var change = row.QuerySelector(".change-down")!;
         Assert.Contains("▼", change.TextContent);
         Assert.Contains("25%", change.TextContent);

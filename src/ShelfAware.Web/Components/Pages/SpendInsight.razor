@@ -35,7 +35,7 @@ else
     {
         <div class="table-scroll">
             <table>
-                <caption class="visually-hidden">Per-product price history and recent change, highest yearly spend first.</caption>
+                <caption class="visually-hidden">Price history and recent change for each product and size, highest yearly spend first.</caption>
                 <thead>
                     <tr>
                         <th scope="col">Item</th>
@@ -49,34 +49,45 @@ else
                 <tbody>
                     @foreach (var t in tickers)
                     {
-                        <tr>
-                            <td>
-                                <a href="/product/@t.ProductId">@t.Name</a>
-                                @if (t.SizeLabel is { } sz)
+                        @* One row per SIZE the product is bought in (most-bought first), so every chart,
+                           current price and change is one size's story — never a bag against a single.
+                           Spend is the product's, whatever size it came in, so it spans the size rows
+                           rather than being split by size (a purchase priced from the all-sizes estimate
+                           has no size series to sit on) or repeated (which would read as double). *@
+                        @foreach (var (s, i) in t.Sizes.Select((size, idx) => (size, idx)))
+                        {
+                            <tr>
+                                <td>
+                                    <a href="/product/@t.ProductId">@t.Name</a>
+                                    @if (s.SizeLabel is { } sz)
+                                    {
+                                        <span class="size-chip" title="This item is bought in more than one size — each size is charted on its own row, most-bought first">@sz</span>
+                                    }
+                                </td>
+                                <td>@t.Category</td>
+                                <td><LineChart Values="s.Prices" Stroke="@TrendColor(s)" AriaLabel="@SeriesLabel(t, s)" /></td>
+                                <td>@Money(s.Current)</td>
+                                <td>
+                                    @if (s.PrevDelta is { } delta && s.PrevPct is { } pct)
+                                    {
+                                        <span class="@ChangeClass(delta)">@Arrow(delta) @Math.Abs(pct).ToString("0.#")%</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="muted">—</span>
+                                    }
+                                </td>
+                                @if (i == 0)
                                 {
-                                    <span class="size-chip" title="This item is bought in more than one size — the chart and change track the size bought most often">@sz</span>
+                                    <td rowspan="@(t.Sizes.Count > 1 ? t.Sizes.Count : (int?)null)">@Money(t.SpendThisYear)</td>
                                 }
-                            </td>
-                            <td>@t.Category</td>
-                            <td><LineChart Values="t.Prices" Stroke="@TrendColor(t)" AriaLabel="@($"{t.Name} price history")" /></td>
-                            <td>@Money(t.Current)</td>
-                            <td>
-                                @if (t.PrevDelta is { } delta && t.PrevPct is { } pct)
-                                {
-                                    <span class="@ChangeClass(delta)">@Arrow(delta) @Math.Abs(pct).ToString("0.#")%</span>
-                                }
-                                else
-                                {
-                                    <span class="muted">—</span>
-                                }
-                            </td>
-                            <td>@Money(t.SpendThisYear)</td>
-                        </tr>
+                            </tr>
+                        }
                     }
                 </tbody>
             </table>
         </div>
-        <p class="muted">▲ = price went up since the previous purchase (costs more); ▼ = down. Spend is valued from receipt prices. Items bought in mixed sizes chart their most-bought size (labelled), so a bag is never compared against a single.</p>
+        <p class="muted">▲ = price went up since the previous purchase (costs more); ▼ = down. Spend is valued from receipt prices. Items bought in mixed sizes get one row per size (labelled, most-bought first), so a bag is never compared against a single; the spend covers every size.</p>
     }
 }
 
@@ -85,8 +96,14 @@ else
     private decimal thisMonth, lastMonth, thisYear, nextMonthForecast;
     private List<Ticker> tickers = [];
 
-    private record Ticker(int ProductId, string Name, Category Category, string? SizeLabel, List<decimal> Prices,
-        decimal Current, decimal? PrevDelta, decimal? PrevPct, decimal SpendThisYear);
+    /// <summary>One product's ticker: its yearly spend (every size) and one <see cref="SizeTicker"/> per
+    /// size it is bought in, in <see cref="PriceSeries.BySize"/> rank order — most-bought first, so the
+    /// first row is the SAME series Product Detail charts (its chart is that list's head).</summary>
+    private record Ticker(int ProductId, string Name, Category Category, decimal SpendThisYear, List<SizeTicker> Sizes);
+
+    /// <summary>One size's price story: the series charted, its latest price, and the move since the
+    /// trip before. SizeLabel is null on a single-size product — a label there would be noise.</summary>
+    private record SizeTicker(string? SizeLabel, List<decimal> Prices, decimal Current, decimal? PrevDelta, decimal? PrevPct);
 
     protected override async Task OnInitializedAsync()
     {
@@ -102,16 +119,18 @@ else
             .Select(l => new { ProductId = l.ProductId!.Value, l.ReceiptId, l.Size, Price = l.UnitPrice!.Value, Date = l.Receipt!.PurchasedAt })
             .ToListAsync();
 
-        // The ticker compares like with like: only the DOMINANT size bucket's prices form the series
-        // ($/bag never sits next to $/lime — that read as a 3,100% "price increase"). Loose/"each"
-        // purchases share one bucket regardless of how many were bought (PriceSeries.Bucket).
-        // Dominant returns null when a product has no positively-priced line (every line was $0 — a
-        // coupon/void/misread), so those products get no ticker rather than a null in the dictionary.
-        var dominantByProduct = lineData
+        // The ticker compares like with like: each size bucket's prices form their OWN series, one row
+        // per size ($/bag never sits next to $/lime — that read as a 3,100% "price increase"), most-bought
+        // first. Loose/"each" purchases share one bucket regardless of how many were bought (SizeBucket).
+        // PriceSeries.BySize is the ONE definition — Product Detail charts its head (PriceSeries.Dominant)
+        // and Reports' unit-price metric reads the same head — and it is empty when a product has no
+        // positively-priced line (every line was $0 — a coupon/void/misread), so those products get no
+        // ticker rather than an empty row.
+        var seriesByProduct = lineData
             .GroupBy(x => x.ProductId)
-            .Select(g => (g.Key, Series: PriceSeries.Dominant(g.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList())))
-            .Where(x => x.Series is not null)
-            .ToDictionary(x => x.Key, x => x.Series!);
+            .Select(g => (g.Key, Series: PriceSeries.BySize(g.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList())))
+            .Where(x => x.Series.Count > 0)
+            .ToDictionary(x => x.Key, x => x.Series);
 
         // Per size bucket with an all-sizes fallback, for valuing a purchase of a KNOWN size and for
         // pricing the forecast's recommended size — an $8 bag purchase shouldn't be valued at the
@@ -171,16 +190,20 @@ else
 
         foreach (var p in products)
         {
-            if (!dominantByProduct.TryGetValue(p.Id, out var series) || series.Points.Count == 0) continue;
-            var prices = series.Points.Select(pt => pt.UnitPrice).ToList();
-            var current = prices[^1];
-            decimal? delta = prices.Count >= 2 ? current - prices[^2] : null;
-            decimal? pct = delta is { } dl && prices[^2] != 0 ? dl / prices[^2] * 100 : null;
-            // Label the series only when the product actually mixes sizes, so the reader can see
-            // WHICH price is trending ("Limes · each") without noise on single-size products.
-            var sizeLabel = series.BucketCount > 1 ? series.SizeKey : null;
-            tickers.Add(new Ticker(p.Id, p.Name, p.Category, sizeLabel, prices, current, delta, pct,
-                spendThisYearByProduct.GetValueOrDefault(p.Id)));
+            if (!seriesByProduct.TryGetValue(p.Id, out var bySize)) continue;
+            var sizes = new List<SizeTicker>(bySize.Count);
+            foreach (var series in bySize)
+            {
+                var prices = series.Points.Select(pt => pt.UnitPrice).ToList();
+                var current = prices[^1];
+                decimal? delta = prices.Count >= 2 ? current - prices[^2] : null;
+                decimal? pct = delta is { } dl && prices[^2] != 0 ? dl / prices[^2] * 100 : null;
+                // Label the rows only when the product actually mixes sizes, so the reader can see
+                // WHICH price is trending ("Limes · each") without noise on single-size products.
+                var sizeLabel = bySize.Count > 1 ? series.SizeKey : null;
+                sizes.Add(new SizeTicker(sizeLabel, prices, current, delta, pct));
+            }
+            tickers.Add(new Ticker(p.Id, p.Name, p.Category, spendThisYearByProduct.GetValueOrDefault(p.Id), sizes));
         }
         tickers = tickers.OrderByDescending(t => t.SpendThisYear).ThenBy(t => t.Name).ToList();
         loaded = true;
@@ -188,12 +211,17 @@ else
 
     private static string Money(decimal amount) => amount.ToString("C");
 
+    /// <summary>The sparkline's accessible name, naming the size when the product mixes sizes — the
+    /// same "{name} price history, {size} size" shape Product Detail's chart uses.</summary>
+    private static string SeriesLabel(Ticker t, SizeTicker s) =>
+        $"{t.Name} price history{(s.SizeLabel is { } sz ? $", {sz} size" : "")}";
+
     // Grocery semantics: a price increase costs more (red), a decrease is cheaper (green).
     // `_ when` guards, not bare relational patterns: Razor reads a leading `<` as markup (docs/environment.md).
-    private static string TrendColor(Ticker t) => t.PrevDelta switch
+    private static string TrendColor(SizeTicker s) => s.PrevDelta switch
     {
-        _ when t.PrevDelta > 0 => "var(--overdue-line)",
-        _ when t.PrevDelta < 0 => "var(--stocked-line)",
+        _ when s.PrevDelta > 0 => "var(--overdue-line)",
+        _ when s.PrevDelta < 0 => "var(--stocked-line)",
         _ => "var(--accent)"
     };
 

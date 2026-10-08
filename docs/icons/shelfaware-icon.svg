@@ -6,8 +6,8 @@
   <path d="M256,150 C330,150 392,206 392,292 C392,378 340,438 256,438 C172,438 120,378 120,292 C120,206 182,150 256,150 Z" fill="#ffffff"/>
   <g clip-path="url(#c)">
     <path d="M104,330 L206,330 L256,392 L306,330 L408,330 L408,452 L104,452 Z" fill="#e3b341"/>
-    <circle cx="272" cy="356" r="4.5" fill="#2563eb"/>
-    <circle cx="278" cy="376" r="4.5" fill="#2563eb"/>
+    <circle cx="256" cy="352" r="4.5" fill="#2563eb"/>
+    <circle cx="256" cy="372" r="4.5" fill="#2563eb"/>
   </g>
   <g clip-path="url(#c)">
     <g transform="rotate(-12 196 392)">

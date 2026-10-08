@@ -44,8 +44,9 @@
         <p class="muted">
             Everyone in your household shares this pantry — products, receipts, recipes, and these settings.
             To bring someone in, generate an <strong>invite code</strong> and give it to them; they enter it
-            when creating their account. There's no code until you make one, and it goes away once it's been
-            used — so there's never a spare key lying around.
+            when they join — at sign-up, or on the household page right after activating their account.
+            There's no code until you make one, and it goes away once it's been used — so there's never a
+            spare key lying around.
         </p>
 
         <label><span>Household name</span></label>
@@ -161,8 +162,9 @@
     @if (AiSettings.Managed)
     {
         <p class="muted">
-            AI on this deployment runs on the host's own keys — there's nothing to set up here. (Your pantry
-            data still lives only on this server.)
+            AI on this deployment runs on the host's own keys — there's nothing to set up here. What the AI
+            features send to the provider, and what stays on this server, is spelled out on the
+            <a href="/privacy">Privacy &amp; data</a> page.
         </p>
         @if (todayUsage is not null)
         {
@@ -667,8 +669,10 @@
 <section class="panel danger-zone">
     <h2>Your data</h2>
     <p class="muted">
-        Everything Reginald knows lives only on this server — nothing is shared. Take a copy any time,
-        or wipe the slate clean.
+        Your pantry is stored on this server and shared with nobody but your household; the AI features
+        send what they need to the AI provider for each request and nothing more (the
+        <a href="/privacy">Privacy &amp; data</a> page says exactly what). Take a copy any time, or wipe
+        the slate clean.
     </p>
 
     <p><a href="/api/data/export" download>⬇ Download my data (JSON)</a></p>
@@ -683,9 +687,17 @@
     {
         <div class="danger-confirm">
             <p><strong>This permanently deletes</strong> your products, purchase history, out/low signals,
-               receipts, recipes, substitutes, avoided foods, grocery list, and app settings — every
-               preference on this page goes back to its default. Your saved API keys are kept: those live
-               in this browser rather than on the server, so use “Forget my key” above to clear them.</p>
+               receipts and their images, recipes, substitutes, avoided foods, grocery list, bug reports,
+               API tokens and app settings — every preference on this page goes back to its default.</p>
+            <p><strong>What stays:</strong> your sign-in (email and password), the household itself and its
+               members, and the usage and credit records this server keeps for its own accounting. There is
+               no self-service account deletion yet — ask whoever runs this server to remove the account.
+               @if (!AiSettings.Managed)
+               {
+                   @:Your saved API keys stay too: those live in this browser rather than on the server, so
+                   @:use “Forget my keys” above to clear them.
+               }
+            </p>
             @if (deleteCount is int records)
             {
                 <p><strong>@records.ToString("N0") record@(records == 1 ? "" : "s")</strong> will be removed.</p>
@@ -1038,7 +1050,7 @@
     }
 
     // Curated defaults, but the fields are editable (datalist) so a stale list never boxes you in.
-    private static readonly string[] AnthropicModels = ["claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-4-8"];
+    private static readonly string[] AnthropicModels = ["claude-haiku-4-5-20251001", "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
     private static readonly string[] OpenAiModels = ["gpt-4o-mini", "gpt-4o"];
     private static readonly string[] LocalModels = ["llama3.1", "qwen2.5", "mistral", "phi3"];
     private static string[] ModelsFor(string p) => p switch

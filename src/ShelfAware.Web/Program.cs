@@ -54,8 +54,10 @@ Directory.CreateDirectory(receiptsDir);
 // a recording of its recipes, so wiping the rows and leaving the clips would make that button a lie.
 // Speech:CacheMegabytes <= 0 means OFF — the cache isn't registered at all, rather than being emptied at
 // every boot while it refills all session (which would re-buy every recipe after a restart AND use the disk).
-var speechCacheMb = builder.Configuration.GetValue<int?>("Speech:CacheMegabytes") ?? 256;
-var speechCacheDir = speechCacheMb > 0 ? Path.Combine(dataDir, "tts-cache") : null;
+// ONE reading of the budget (SpeechRegistration.CacheBudgetBytesOf) — the same number the after-write trim
+// is registered with, so the boot sweep below and the per-household budget can never trim to two caps.
+var speechCacheBytes = SpeechRegistration.CacheBudgetBytesOf(builder.Configuration);
+var speechCacheDir = speechCacheBytes > 0 ? Path.Combine(dataDir, "tts-cache") : null;
 builder.Services.AddDbContextFactory<ShelfAwareDbContext>(options =>
     // SplitQuery: several read paths Include two+ collections (Purchases + Signals + Tags/Substitutes).
     // As a single query that's a cartesian join — row-multiplying and slow — which is what EF's [20504]
@@ -453,13 +455,14 @@ builder.Services.AddScoped<ByokChatClient>();
 builder.Services.AddScoped<IEntitlements, Entitlements>(); // the current household's tier — the meter's Founder exemption + the Settings badge
 builder.Services.AddScoped<AiUsageMeter>();
 // The box-wide demo valve is operator-global (auth.db, no per-scope state), so singleton — injected into the
-// scoped metering chain below. Also exposed as IDemoValve so the AI surfaces' pre-check (AiErrorText) can ask
-// "is the box capped for today?" through the seam without depending on the concrete DB-backed meter.
+// scoped metering chain below. The AI surfaces' pre-check (AiErrorText) asks IManagedCallCaps instead: a
+// scoped composite of this valve and the per-household AiUsageMeter caps, in the order the gate checks them,
+// so a surface can say "used up for today" without depending on either concrete DB-backed meter.
 // The health probe caches its last answer for a few seconds, so it must be a singleton or the cache is
 // per-request and buys nothing. It holds no per-user state — it asks two databases whether they open.
 builder.Services.AddSingleton<HealthProbe>();
 builder.Services.AddSingleton<DemoUsageMeter>();
-builder.Services.AddSingleton<IDemoValve>(sp => sp.GetRequiredService<DemoUsageMeter>());
+builder.Services.AddScoped<IManagedCallCaps, ManagedCallCaps>();
 builder.Services.AddSingleton<ServiceMarginMeter>();
 builder.Services.AddScoped<IChatClient, MeteredChatClient>();
 
@@ -623,14 +626,15 @@ builder.Services.AddRateLimiter(o =>
 
 var app = builder.Build();
 
-// Keep the speech cache from creeping forever. It only grows when text changes (an edited step orphans
-// its clip, and its neighbours'), so once at startup is the right cadence — a per-write sweep would put
-// a directory scan on the path the cache exists to make fast. The budget is PER HOUSEHOLD (so a heavy
-// user can't evict a light one's clips and make them re-buy the audio), which means total disk is
-// households × Speech:CacheMegabytes rather than a single ceiling.
+// Keep the speech cache from creeping forever. This boot sweep covers every household's drawer (and root
+// orphans) once; between boots, a write that takes a household over its budget triggers its own trim
+// (SpeechCacheBudget + CachingTextToSpeech) — the in-process voices made clips free and ~10× larger, so
+// a once-at-boot cadence let a cookbook-reading household run far past the cap for weeks. The budget is
+// PER HOUSEHOLD (so a heavy user can't evict a light one's clips and make them re-buy the audio), which
+// means total disk is households × Speech:CacheMegabytes rather than a single ceiling.
 if (speechCacheDir is not null)
 {
-    CachingTextToSpeech.Trim(speechCacheDir, speechCacheMb * 1024L * 1024L,
+    CachingTextToSpeech.Trim(speechCacheDir, speechCacheBytes,
         app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SpeechCache"));
 }
 
@@ -710,6 +714,10 @@ using (var scope = app.Services.CreateScope())
     db.Database.EnsureCreated();
     // Columns added after v3 shipped (EnsureCreated never alters an existing DB).
     AdditiveSchema.Apply(db);
+    // Strictly after the additive pass (which creates RecipeTags on a DB that predates it). One-off
+    // normalize-and-rewrite of the tag columns into TagVocabulary.StoredForm, so a pre-cap row written
+    // decomposed or padded is seen by dedup again — see the class.
+    TagStoredFormMigration.Apply(db, app.Logger);
 }
 
 // Behind a TLS-terminating reverse proxy (Tailscale Serve for the private self-host, Caddy on the
@@ -818,6 +826,8 @@ app.Use(async (context, next) =>
             && !path.StartsWithSegments("/_framework")
             && !path.StartsWithSegments("/_content")
             && !path.StartsWithSegments("/demo")     // public, anonymous
+            && !path.StartsWithSegments("/about")    // public, anonymous — a just-activated account can read it
+            && !path.StartsWithSegments("/privacy")  // public, anonymous — likewise
             && !Path.HasExtension(path.Value);       // static assets
 
         if (isAppPage)
@@ -975,7 +985,7 @@ app.MapGet("/api/receipt-image/{id:int}", async (
 // PhotoUploadIntake — the shared front door both photo endpoints use.
 app.MapPost("/api/receipts/extract", async (
     HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
-    IEntitlements entitlements, IDemoValve demoValve, ReceiptIngestionService ingestion, ILoggerFactory logs, CancellationToken ct) =>
+    IEntitlements entitlements, IManagedCallCaps demoValve, ReceiptIngestionService ingestion, ILoggerFactory logs, CancellationToken ct) =>
 {
     var (files, error) = await PhotoUploadIntake.ReadAsync(request, ctx, antiforgery,
         mt => mt.StartsWith("image/", StringComparison.OrdinalIgnoreCase) || mt == "application/pdf",
@@ -1013,7 +1023,7 @@ app.MapPost("/api/receipts/extract", async (
 // freezer to PDF). The raw model output is deliberately NOT shipped back — it's debug-only and can be large.
 app.MapPost("/api/pantry-photo/read", async (
     HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
-    IEntitlements entitlements, IDemoValve demoValve, IShelfCensusReader reader, IHouseholdDbFactory dbFactory,
+    IEntitlements entitlements, IManagedCallCaps demoValve, IShelfCensusReader reader, IHouseholdDbFactory dbFactory,
     ILoggerFactory logs, CancellationToken ct) =>
 {
     // maxFiles: 8 matches the census page's own cap (PantryPhoto.MaxPhotos — the shelf reader looks at a

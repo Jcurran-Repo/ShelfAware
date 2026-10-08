@@ -68,6 +68,12 @@ act on the caller's rows only. See `docs/features/journal.md`.
 - **`NullableInviteCodeMigration`** is the documented exception: SQLite cannot ALTER a column to
   nullable, so relaxing NOT NULL needs a create/copy/drop/rename rebuild. It names its columns
   explicitly and asserts the set it knows, and it must run **strictly after** `AdditiveSchema.Apply`.
+- **`TagStoredFormMigration`** (2026-10-07) is the one *data* pass: at boot, strictly after the additive
+  pass, it rewrites every `ProductTags` / `RecipeTags` value to `TagVocabulary.StoredForm` (trimmed,
+  whitespace-collapsed, NFC) across households in one raw-SQL transaction — deliberately not a fifth
+  `IgnoreQueryFilters` site — collapsing a same-owner collision onto the earlier row and leaving anything
+  over the cap in any form alone. Idempotent: a second boot rewrites nothing, and `Canonicalize` writes the
+  stored form, so no new row can need it. The pattern for the next one-off column rewrite, if there is one.
 
 Anything structural is still a fresh-DB decision. Adopting EF Migrations is designed but sequenced —
 `docs/remediation-plan.md` §8.

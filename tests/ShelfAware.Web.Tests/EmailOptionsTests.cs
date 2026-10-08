@@ -71,4 +71,14 @@ public class EmailOptionsTests
         };
         Assert.False(o.CredentialsPaired);
     }
+
+    // The phrase ForgotPassword's status and RegisterConfirmation both promise from — one reading of the
+    // cooldown the queue enforces. Off means no promise at all, never "one link per 0 seconds".
+    [Theory]
+    [InlineData(60, "minute")]
+    [InlineData(120, "2 minutes")]
+    [InlineData(90, "90 seconds")]
+    [InlineData(0, null)]
+    public void The_cooldown_is_phrased_from_the_enforced_setting(int seconds, string? phrase) =>
+        Assert.Equal(phrase, new EmailOptions { PerRecipientCooldownSeconds = seconds }.CooldownPhrase());
 }

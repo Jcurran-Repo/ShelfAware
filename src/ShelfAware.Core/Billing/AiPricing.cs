@@ -112,8 +112,12 @@ public sealed class BillingOptions
     {
         ["claude-haiku-4-5"] = new() { InputPerMTok = 1.00m, OutputPerMTok = 5.00m },
         ["claude-haiku-4-5-20251001"] = new() { InputPerMTok = 1.00m, OutputPerMTok = 5.00m },
+        ["claude-haiku-5-5"] = new() { InputPerMTok = 0.10m, OutputPerMTok = 0.50m },
         ["claude-sonnet-4-6"] = new() { InputPerMTok = 3.00m, OutputPerMTok = 15.00m },
+        ["claude-sonnet-5"] = new() { InputPerMTok = 2.00m, OutputPerMTok = 10.00m },
+        ["claude-sonnet-5-5"] = new() { InputPerMTok = 2.00m, OutputPerMTok = 10.00m },
         ["claude-opus-4-8"] = new() { InputPerMTok = 5.00m, OutputPerMTok = 25.00m },
+        ["claude-opus-5-5"] = new() { InputPerMTok = 4.00m, OutputPerMTok = 20.00m },
     };
 }
 

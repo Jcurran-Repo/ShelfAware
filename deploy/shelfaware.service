@@ -6,6 +6,13 @@
 [Unit]
 Description=ShelfAware pantry tracker
 After=network.target
+# Stop a fast-failing build from looping forever: with Restart=always alone a bad env file or a
+# missing model would relaunch every 5 s indefinitely, and the unit would never read as anything
+# but "activating". Five starts inside two minutes trips the limit, the unit enters "failed", and
+# install.sh's rollback can see that and act on it (it runs `systemctl reset-failed` before
+# starting the previous build, because a tripped limit also refuses a manual start).
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 User=shelfaware
@@ -13,11 +20,39 @@ Group=shelfaware
 WorkingDirectory=/opt/shelfaware
 ExecStart=/opt/shelfaware/ShelfAware.Web
 EnvironmentFile=/etc/shelfaware/env
+# Timezone: every "today" in the app is server-local, and a systemd service starts with no TZ of
+# its own. Set it for the box (timedatectl set-timezone) or on the TZ= line in the env file above
+# (deploy/env.example, deploy/demo-box.env.example) -- never here, where it would be world-readable
+# config that drifts from the file that holds the rest.
 Restart=always
 RestartSec=5
 # Light hardening; the app needs no privileges and writes only under its DataDir.
 NoNewPrivileges=true
 PrivateTmp=true
+# The whole filesystem is read-only to the service except the one tree it writes: its DataDir
+# (/var/lib/shelfaware -- the SQLite databases, receipts/, recipe-images/, keys/, tts-cache/).
+# The build in /opt/shelfaware and the voice models in /var/lib/shelfaware-models are read-only to
+# it on purpose (install.sh and the bootstrap already make them root-owned), and are deliberately
+# NOT listed here. Add a path only if the app gains a new place it writes.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/shelfaware
+# /home, /root and /run/user are invisible to it; its own home is its DataDir, not under /home.
+ProtectHome=true
+# No physical devices: audio is captured and played in the browser, never on the box.
+PrivateDevices=true
+# Everything the app creates (databases, receipts, keys) is owner-only. The backup runs as root.
+UMask=0077
+# Blazor Server holds a WebSocket per circuit plus SQLite handles; the 1024 default is too low to
+# be a safe ceiling under a modest crowd.
+LimitNOFILE=65536
+# Memory: this is the 2 GB droplet's headroom. The app idles well under 1 GB and a loaded voice
+# model adds a few hundred MB (Piper ~65 MB, Moonshine ~240 MB at peak; Kokoro's ~600 MB would be
+# marginal here). Above MemoryHigh the kernel reclaims and throttles; at MemoryMax it kills. Both
+# bound RAM only -- swap is MemorySwapMax, left unlimited, so the bootstrap's swap file is spill room
+# rather than part of either number. .NET sizes its GC heap from MemoryMax (~75%), not MemoryHigh.
+# RAISE BOTH when the box is resized -- these are sized to the box, not to the app.
+MemoryHigh=1200M
+MemoryMax=1500M
 
 [Install]
 WantedBy=multi-user.target

@@ -99,3 +99,62 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+---
+
+## 4. NuGet dependencies
+
+Fetched from nuget.org at build time, not redistributed in this repository. Versions are the ones the
+`.csproj` files pin as of 2026-10-07; the files are the authority if this list drifts.
+
+| Package | Version | License |
+|---|---|---|
+| `Anthropic` | 12.29.0 | MIT |
+| `HotChocolate.AspNetCore` | 16.6.1 | MIT |
+| `MailKit` | 4.17.0 | MIT |
+| `Microsoft.Extensions.AI.OpenAI` | 10.7.0 | MIT |
+| `Microsoft.*` (ASP.NET Core Identity, EF Core SQLite, Google auth, Extensions) | 10.0.9 | MIT |
+| `org.k2fsa.sherpa.onnx` | 1.13.8 | Apache-2.0 |
+| `SQLitePCLRaw.bundle_e_sqlite3` | 3.0.3 | Apache-2.0 |
+| `Stripe.net` | 52.4.1 | Apache-2.0 |
+
+The test projects additionally pull xUnit (Apache-2.0), bUnit (MIT), `Microsoft.CodeAnalysis.CSharp`
+(MIT) and `coverlet.collector` (MIT).
+
+### A note on sherpa-onnx's native runtime
+
+The `org.k2fsa.sherpa.onnx` package ships a native library that bundles **espeak-ng** phonemizer
+data, which is licensed **GPL-3.0-or-later**. Shelf Aware uses it unmodified, as a runtime component
+of a hosted service — the app links against the package's binaries at run time and makes no changes
+to them — and does not redistribute it as part of this repository's source. The GPL's obligations
+attach to *distribution*: anyone who redistributes a `dotnet publish` output (which contains those
+binaries) must honour espeak-ng's licence for that distribution, including its source-availability
+terms. Running the published app on your own box, as the deploy docs describe, is not distribution.
+
+---
+
+## 5. Speech models
+
+None of these is in the repository. The deploy docs fetch each one from its upstream release into
+`/var/lib/shelfaware-models` (or `app-data/models` on the family box) at deploy time, and the operator
+chooses which to run with `Speech:Provider`.
+
+| Model | Fetched by | License |
+|---|---|---|
+| **Kokoro-82M** (`kokoro-int8-en-v0_19`) | `docs/deploy-kokoro.md` | Apache-2.0 (as that doc records, from the model's own card) |
+| **Moonshine** | `docs/deploy-moonshine.md` | MIT (as that doc records) |
+| **Piper** voice `en_US-ryan-medium` (and the other `vits-piper-*` voices in the bake-off) | `docs/deploy-piper.md`, `docs/voice-bakeoff.md` | **Per voice.** Each archive carries a `MODEL_CARD` file naming the dataset licence for that voice; the operator must read it before changing voices. |
+| **Kitten** (`kitten-nano-*`, `kitten-mini-*`) and **Matcha** (`matcha-icefall-en_US-ljspeech` + its vocoder) | `docs/voice-bakeoff.md` | **Per model.** Same rule: the `MODEL_CARD` in each archive is the authority, and the vocoder Matcha needs is a separate release with its own. |
+
+The per-voice entries are deliberately not summarised here: a Piper or Kitten voice's licence depends
+on the dataset it was trained from, and writing one down for a voice someone later swaps out would be
+a claim this file could not keep true.
+
+---
+
+## 6. Media
+
+`src/ShelfAware.Web/wwwroot/media/` holds `jingle.mp3`, `song.mp3`, `lyric-video.mp4` and
+`reginald-dance.mp4`. These were generated with [Suno](https://suno.com) for this project; the rights
+to use them are those Suno's terms grant to the generating account. They are not covered by the
+PolyForm licence on the code, and they are not offered for reuse outside this project.

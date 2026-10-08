@@ -1,5 +1,8 @@
 # Undo history & the `/history` page — implementation plan
 
+**Status:** ✅ IMPLEMENTED (v5.1, 2026-08-20, PRs #14–#16) — this is the historical plan. `/history`, the activity
+log and per-action undo all shipped; redo is still the documented next step it names.
+
 Handoff spec for a fresh context. **Scope: the whole feature in one branch** — an activity log,
 per-action undo, an inline Undo affordance, and a `/history` page. Redo is a documented *next step*,
 not built here.

@@ -126,7 +126,7 @@ dismiss polish as overkill "because it's single-user."
 |---|---|
 | **Tests** | Four suites, 0 failing, 0 warnings on a non-incremental Release build. ⚠️ The count lives in `src/ShelfAware.Web/wwwroot/test-status.json`, written by the CI run that measured it and rendered on `/admin` — **don't type it here**: the copy that used to sit on this line was stale by 46 tests the week it was written, and the `/admin` card it mirrored was stale by 617. A number a person maintains is a number that will be wrong. |
 | **Mutation gate** | Core at 100% — full sweep weekly, diff-scoped per PR |
-| **Live** | Demo box on a DigitalOcean droplet since 2026-08-11 (BYOK); family box on Jordan's PC behind Cloudflare Access since 2026-08-12 |
+| **Live** | Demo box on a DigitalOcean droplet since 2026-08-11 (managed key, capped); family box on Jordan's PC behind Cloudflare Access since 2026-08-12 |
 | **Phases 1–4** (DESIGN.md §10) | ✅ Done, acceptance verified |
 | **Phase 5** — cloud deploy + README | ✅ Deployed end to end; see `docs/backlog.md` for the last polish items |
 | **In flight** | The remediation arc from the 2026-09-18 audit — seven phases, designed in `docs/remediation-plan.md` |
@@ -136,9 +136,10 @@ self-contradictory five separate times, each written from an intermediate run or
 applies to any count in any doc — see `docs/remediation-plan.md` §6 on artifacts that claim to be true.
 
 The app is far beyond the spec's three pages. Current surfaces: Dashboard (`/`), Upload (`/receipt`),
-Products, Grocery List, Trends, Product Detail, Accuracy, Recipes, Receipts, Count from a photo
-(`/pantry-photo`), Cookbook, History, Reports, Meal plan, Meal journal (`/journal`), Bugs, Admin, and the public About page —
-the app's only page outside the auth wall.
+Products, Grocery List, Trends (`/trends`, `SpendInsight.razor`), Product Detail, Accuracy, Recipes,
+Receipts, Count from a photo (`/pantry-photo`), Cookbook, History, Reports, Meal plan, Meal journal
+(`/journal`), Settings, Demo, Bugs, and Admin. Outside the auth wall: `/about`, `/demo`, `/privacy`,
+`/Error`, `/not-found`, the `/Account/*` sign-in pages, and `/healthz`.
 
 ## Where to look
 

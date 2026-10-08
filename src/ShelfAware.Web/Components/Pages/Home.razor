@@ -12,6 +12,7 @@
 @inject VoiceCoordinator Coordinator
 @inject IJSRuntime JS
 @inject ILogger<Home> Logger
+@inject ShelfAware.Core.Speech.IVoiceCredentials Voice
 
 <PageTitle>Reginald</PageTitle>
 
@@ -201,7 +202,12 @@ else
                         AriaLabel="Quick update — say what you bought or ran low on"
                         BlankHint="@QuickUpdateBlankHint"
                         OnApplied="LoadAsync" />
-        <p class="muted small quick-update-hint">For a back-and-forth that keeps listening as you move around, use the 🎙 Assistant in the corner.</p>
+        @* Asks the same "can this box hear?" definition the box's own voice strip asks: on a deaf box there
+           is no Assistant in the corner to point at. *@
+        @if (ShelfAware.Core.Speech.VoiceEar.CanHear(Voice.Ear))
+        {
+            <p class="muted small quick-update-hint">For a back-and-forth that keeps listening as you move around, use the 🎙 Assistant in the corner.</p>
+        }
     </section>
 
     <details class="everything-else">

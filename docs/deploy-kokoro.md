@@ -184,7 +184,7 @@ Then restart the app: `sudo systemctl restart shelfaware`.
 > ⚠️ **Clips are WAV, which is about ten times the size of the MP3 the sidecar returned.** 16-bit mono
 > at 24 kHz is ~48 KB per spoken second, so the default `Speech__CacheMegabytes=256` holds roughly 90
 > minutes of speech per household rather than fifteen hours. Raise it if a household's cookbook is
-> large; the trim is per household and runs at startup.
+> large; the trim is per household, at startup and after any write that takes a household over its budget.
 
 ## 5. Verify end to end
 
@@ -203,7 +203,7 @@ of taste** — put it in the wrong place and the next publish moves it out from 
 ### Where it goes, and why there
 
 ```
-C:\Users\Jorcu\ShelfAware-server\app-data\models\kokoro-int8-en-v0_19
+C:\Users\<you>\ShelfAware-server\app-data\models\kokoro-int8-en-v0_19
 ```
 
 Under `app-data`, not beside it. [`deploy/publish-family.ps1`](../deploy/publish-family.ps1) renames the
@@ -284,7 +284,7 @@ is the one with a family on it.
 
 ### Point the app at it
 
-The family box's settings live in **`C:\Users\Jorcu\ShelfAware-server\appsettings.json`** — the box's
+The family box's settings live in **`C:\Users\<you>\ShelfAware-server\appsettings.json`** — the box's
 own file, which `publish-family.ps1` carries across every publish *over* the one in the publish output.
 Editing the repo's `src/ShelfAware.Web/appsettings.json` does **not** reach it; that copy is overwritten
 on arrival. Add to the box's file:
@@ -293,7 +293,7 @@ on arrival. Add to the box's file:
   "Speech": {
     "Provider": "Kokoro",
     "Kokoro": {
-      "ModelDirectory": "C:\\Users\\Jorcu\\ShelfAware-server\\app-data\\models\\kokoro-int8-en-v0_19",
+      "ModelDirectory": "C:\\Users\\<you>\\ShelfAware-server\\app-data\\models\\kokoro-int8-en-v0_19",
       "SpeakerId": 0,
       "Speed": 0.9,
       "NumThreads": 2

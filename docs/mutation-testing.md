@@ -72,6 +72,19 @@ limitation, recorded so the tracked score is honest about what it does and does 
 the same expression — and such a mutant can be a live SURVIVOR the score silently excludes. See rule
 4 of the adversarial-review rules.
 
+⚠️ **And the sharpest: ALL of a file's mutants can land in this bucket, and the check still passed.**
+Found 2026-09-19 on the in-process-voice branch: `WaveAudio.cs` was the only Core file the PR added,
+all 34 of its mutants failed to compile (a `short` argument legal only because the compiler folded it
+to a constant — Stryker rewrites the expression into a ternary, which is not one), Stryker logged
+*"0 total mutants will be tested"* and *"unable to calculate a mutation score"*, **exited 0**, and
+the `Core mutation (changed files)` check went green on a file it had not read. **The PR gate now
+fails on this:** after Stryker exits 0 on a PR that touched Core, `mutation-pr.yml` reads the JSON
+report and fails the job when the count of mutants with a status other than `CompileError`/`Ignored`
+is zero — or when no report was written at all — naming the hole in the error. A score over nothing
+is not 100%; it is undefined, and the gate now says so instead of passing. The weekly run's score
+publisher applies the same refusal in the other direction: a report with nothing testable leaves the
+last real number standing rather than overwriting it.
+
 ## Scope-tuning outcome (2026-08-25): nothing honest to exclude
 
 Before the sweep, a per-file audit of the baseline (the JSON report) settled whether any Core files
@@ -297,6 +310,9 @@ row is called done.
 | 2026-08-25 | 64.72% | 1214 | 611 | 453 | First baseline (+8 timeout, ~55 no-coverage). ~666 to close to 100%. Untuned scope — includes interfaces/DTOs. |
 | 2026-08-26 | **100.00%** | 1901 | 0 | 452 | **Sweep complete** — every mutant killed or annotated equivalent. +11 timeout, 170 ignored — of which **44 are reasoned source annotations** (each adversarially attacked per rule 3) and **126 are Stryker's own "block already covered" de-dup** (a whole-method-body removal is redundant when every statement inside it is separately mutated — not a hand exclusion). 1170 Core tests, 0 warnings on a `--no-incremental` Release build. Two closing findings: a `static readonly` collection defeats Stryker's runtime toggle (restructure into the method body), and a multi-line `&&` chain can read as a coverage false-survivor (simplify the chain — hand-apply to confirm before trusting "Survived"). |
 | 2026-08-27 | **100.00%** | 1897 | 0 | 452 | **Pre-merge gate re-run.** The gate's code review found ONE false-equivalence annotation: CatalogIndex's ctor `continue` was annotated equivalent, but this same branch had removed the second guard (`ExactMatches`'s `key.Length > 0`) that made it so — leaving the `continue` the sole guard, its mutant killable and killed by `A_punctuation_only_name_is_never_indexed_or_matched`. Removed the annotation → the mutant is now honestly **Killed, not Ignored** (169 ignored: 43 annotations + 126 block-filter). +16 timeout; the killed/timeout split shifts run-to-run with machine load, so read the stable facts — **0 survived, 0 no-coverage**; detected (killed+timeout) = 1913. |
+| 2026-09-21 | **100.00%** | — | 0 | — | Weekly scheduled run on `master`, green. The per-bucket counts are in that run's `mutation-report` artifact, not copied here: a number a person types is a number that will be wrong (CLAUDE.md, build state), and from the next change in score `mutation.yml` writes the measured number into `test-status.json` itself. |
+| 2026-09-28 | **100.00%** | — | 0 | — | Weekly scheduled run on `master`, green. |
+| 2026-10-05 | **100.00%** | — | 0 | — | Weekly scheduled run on `master`, green. |
 
 ## Resume state (2026-08-27 — sweep COMPLETE + gated)
 

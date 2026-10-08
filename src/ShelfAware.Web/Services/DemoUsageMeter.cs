@@ -4,15 +4,6 @@ using ShelfAware.Web.Auth;
 
 namespace ShelfAware.Web.Services;
 
-/// <summary>The come-back-tomorrow pre-check for a UI surface, split out from the concrete DB-backed
-/// <see cref="DemoUsageMeter"/> so <see cref="AiErrorText"/> can ask "is the whole box capped for today?"
-/// without dragging a database into its tests. Returns null unless a Demo cap is configured AND today's
-/// box-wide count has reached it — a total no-op on a family / self-host box.</summary>
-public interface IDemoValve
-{
-    ValueTask<string?> CallBlockedMessageAsync(CancellationToken cancellationToken = default);
-}
-
 /// <summary>The managed demo box's BOX-WIDE daily AI valve — the wallet bound a public box with open
 /// registration needs that the per-household <see cref="AiUsageMeter"/> can't give (every new household
 /// gets its own daily allowance). Counts host-key LLM calls per day in ONE row (<see cref="DemoUsageDay"/>,
@@ -26,7 +17,7 @@ public interface IDemoValve
 public sealed class DemoUsageMeter(
     IDbContextFactory<AuthDbContext> dbFactory,
     IOptions<DemoOptions> options,
-    ILogger<DemoUsageMeter> logger) : IDemoValve
+    ILogger<DemoUsageMeter> logger)
 {
     private DemoOptions Opt => options.Value;
 
@@ -60,7 +51,8 @@ public sealed class DemoUsageMeter(
         if (await IsCallBlockedAsync(ct)) throw new DemoDailyCapException();
     }
 
-    /// <inheritdoc />
+    /// <summary>The non-throwing twin of <see cref="EnsureCallAllowedAsync"/>: the come-back message when the
+    /// box is capped for today, else null. Asked through <see cref="ManagedCallCaps"/>.</summary>
     public async ValueTask<string?> CallBlockedMessageAsync(CancellationToken ct = default) =>
         await IsCallBlockedAsync(ct) ? DemoLimits.DailyCapReachedMessage : null;
 

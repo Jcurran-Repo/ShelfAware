@@ -29,9 +29,25 @@ public sealed record TourStep(string Route, string Title, string Body, string? A
     /// </summary>
     public TourVariant? WhenManaged { get; init; }
 
-    public string TitleFor(bool managed) => managed && WhenManaged is not null ? WhenManaged.Title : Title;
+    /// <summary>
+    /// What this step says on a box that CANNOT HEAR — no local ear and no voice key (the managed demo
+    /// box's shape since 2026-09-21). The same rule as <see cref="WhenManaged"/>, one deployment fact over:
+    /// a step that promises "the 🎙 Assistant does the same hands-free" on a box where no microphone
+    /// affordance renders is a screen stating something the app will not do. Null means the step never
+    /// mentions listening or the Assistant, which is true of every step but three. Checked after the
+    /// managed variant, so a step carrying both reads its managed copy on a managed deaf box (the demo) —
+    /// which is why that copy must not mention listening either; <c>TourScriptDeafBoxTests</c> holds it.
+    /// </summary>
+    public TourVariant? WhenDeaf { get; init; }
 
-    public string BodyFor(bool managed) => managed && WhenManaged is not null ? WhenManaged.Body : Body;
+    public string TitleFor(bool managed, bool canHear = true) => Variant(managed, canHear)?.Title ?? Title;
+
+    public string BodyFor(bool managed, bool canHear = true) => Variant(managed, canHear)?.Body ?? Body;
+
+    private TourVariant? Variant(bool managed, bool canHear) =>
+        managed && WhenManaged is not null ? WhenManaged
+        : !canHear && WhenDeaf is not null ? WhenDeaf
+        : null;
 }
 
 /// <summary>Alternative wording for a step under a different deployment shape.</summary>
@@ -70,7 +86,12 @@ public static class TourScript
         new("/", "Just tell it",
             "Type it the way you'd say it — “we're out of dog food, almost out of coffee” — and the list "
             + "updates on the spot. The \U0001F399 Assistant does the same hands-free, and keeps listening as you move around.",
-            ".quick-update"),
+            ".quick-update")
+        {
+            WhenDeaf = new TourVariant("Just tell it",
+                "Type it the way you'd say it — “we're out of dog food, almost out of coffee” — and the list "
+                + "updates on the spot. One line can carry several updates at once."),
+        },
 
         new("/products", "Everything you track",
             "Every item you buy, with its usual brand and size, and an Out button whenever you need it. "
@@ -85,7 +106,12 @@ public static class TourScript
         new("/recipes", "Cook what you have",
             "Recipes marked by what's actually on your shelves. Ask for ideas, adapt a saved one to what's in tonight, "
             + "or start a hands-free cook-along that reads the steps out and takes “next” while your hands are full.",
-            PageTitle),
+            PageTitle)
+        {
+            WhenDeaf = new TourVariant("Cook what you have",
+                "Recipes marked by what's actually on your shelves. Ask for ideas, adapt a saved one to what's in tonight, "
+                + "or have the steps read out loud one at a time while you cook."),
+        },
 
         new("/receipt", "Start with a receipt",
             "Photograph or upload a grocery receipt and the lines are read and matched to what you already buy. "
@@ -118,6 +144,10 @@ public static class TourScript
             + "You can export or delete everything from this page whenever you like.",
             "[data-tour=ai-keys]")
         {
+            WhenDeaf = new TourVariant("Your key, your data",
+                "Everything you've just seen works without an API key. Adding your own — it stays in your browser, "
+                + "never on the server — switches on receipt reading and recipe ideas. "
+                + "You can export or delete everything from this page whenever you like."),
             WhenManaged = new TourVariant("Your data",
                 "The AI features here run on the keys whoever set this up provided, so there's nothing for you "
                 + "to configure. This page is where you export everything you've got, or delete the lot."),

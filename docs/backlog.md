@@ -21,17 +21,6 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   list. `docs/mutation-testing.md` §"Known limitation: compile-error mutants" describes the bucket but
   reads as "a few mutants cannot exist", not "all of them can vanish and the check still passes".
 
-- **The TTS cache is trimmed only at startup, and a free voice fills it ~10× faster.** `CachingTextToSpeech.Trim`
-  runs once, at boot, against `Speech:CacheMegabytes` per household. That cadence was chosen when every clip
-  was an MP3 someone had paid ElevenLabs for — small, and self-limiting because nobody synthesizes what
-  they are billed for by accident. The in-process Kokoro voice makes clips **WAV at ~48 KB per spoken
-  second** and free, so a household reading its way through a cookbook on a box that is up for weeks can
-  run a long way past the cap between restarts. On a 2 GB droplet that also now holds ~600 MB of model,
-  that is the disk to watch. Nothing is broken today — the cap is still enforced, just not promptly — and
-  the fix (trim after a write, for the household written) is a change to a hot path with its own cost, so
-  it is a deliberate decision rather than a tidy-up. **Revisit once the family box has a few weeks of real
-  read-aloud on it**, which is the first time there will be a real number instead of an estimate.
-
 - **The mutation score on `/admin` is carried forward, not re-measured.** `ci.yml` does not run Stryker,
   so its snapshot never measures a score; it now keeps whatever the last measuring run wrote rather than
   blanking the tile (which is what it did before 2026-09-19, and would have removed the card on the first
@@ -42,90 +31,125 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   weekly run next changes the score**, since that is when the staleness would first bite.
 
 - **The credit gate checks the balance but does not reserve it.** `EnsureManagedCallAllowedAsync` reads
-  the balance before the provider call; `RecordCreditConsumptionAsync` writes the draw after it. So several
-  acts started at once — two tabs, the roaming voice agent, a fast clicker — can all pass the same check
-  before any of them draws, and `RecordConsumptionAsync` writes its negative row with no floor. The result
-  is an **overdraft, not free credit**: the balance goes negative, the next gate refuses, and the household
-  has to fill the hole before spending again, so it self-corrects and errs toward the operator for exactly
-  one burst. Closing it properly means a reservation row at the gate and a release path on every exit of
-  every act, which is real work for a bounded, self-correcting exposure — parked deliberately, and named
-  here because it was previously nowhere. Found 2026-09-19 while writing up why the charge lands first
-  (`docs/subscription-plan.md` §4.w). **Revisit if a balance is ever seen materially negative.**
-
-- **Tag dedup does not see through Unicode confusables.** `TagVocabulary.Normalize` now folds to one
-  Unicode normal form, so a precomposed "Café" and a decomposed one are the same tag. A Cyrillic "Ѕoda"
-  against "Soda" is still a new tag. That needs a confusable *skeleton* mapping rather than a normal
-  form, and the blast radius is small and household-local: the advisor can only ever return an element
-  of that household's own list. On the receipt path the result is a suggestion the user accepts or
-  overrides; on the recipe path `RecipeTagService.SuggestAndApplyAsync` applies and saves it with no
-  confirmation step, so there it IS a silent write — the first version of this note claimed otherwise.
-  Raised by the pre-merge security gate, 2026-09-19.
+  the balance before the provider call; the act's charge is claimed in the tail after it, and
+  `RecordConsumptionAsync` writes the negative row with no floor. So several ACTS started at once can all
+  pass the same check and all charge — an **overdraft, not free credit**: the balance goes negative, the next
+  gate refuses, and the household fills the hole before spending again, so it self-corrects and errs toward
+  the operator for exactly one burst. ⚠️ **Re-costed 2026-10-07** (assessment in the session that did the
+  pre-release audit): the original note said closing it needs "a reservation row at the gate and a release
+  path on every exit of every act". The release path already exists — `AiActionScope.DisposeAsync` →
+  `MeteredChatClient.ReverseUndeliveredAsync`, built 2026-09-19 after this note was written, runs on every
+  exit with `delivered` defaulting to 0 — so "reserve then release unused" collapses to "charge at the gate,
+  refund what wasn't delivered". What is left is a conditional ledger write (`INSERT … WHERE balance >=
+  price`, raw SQL, atomic on SQLite only in a form that has to be checked on the PC), carrying the margin-day
+  stamp from the gate to the tail, a file-backed test harness for the concurrency case, and three semantic
+  calls that are Jordan's: a failed first call writes a net-zero charge+reversal pair that appears in the
+  export; a ledger failure at the gate refuses the act (today it lets the call run — pinned by
+  `A_failed_money_write_costs_that_call_not_the_whole_action`); and `CheckAiAsync` becomes a preview beside
+  the write that enforces. Its own PR, on the PC, after those are decided. **Revisit if a balance is ever
+  seen materially negative.**
 - **A handful of invisible code points still read as an "answer" and are charged.** `ProviderReply`'s
   allow-list excludes marks, punctuation, separators, controls and the replacement character, but a
   Hangul filler (category `Lo`) and BRAILLE PATTERN BLANK (`So`) are categorically letters and symbols
   while rendering as nothing. Left alone deliberately: a model emitting only one of those is not a shape
   anyone has seen, and chasing every invisible code point by hand is how the deny-list this replaced got
   it wrong. Revisit if a real reply ever lands in that gap. Raised by the pre-merge code gate, 2026-09-19.
-- **Advisor prompts interpolate the household's whole vocabulary with no cap.** `AnthropicTagAdvisor`
-  joins every existing tag into the prompt, the tag input on `/receipt` has no `maxlength`, and
-  `AnthropicRecipeTagAdvisor` and `AnthropicPantryChat` do the same with known tags and the full product
-  list. That is an unbounded per-call input-token cost the household controls, and it is what makes a
-  provider timeout reachable on purpose rather than by luck. Pre-existing; raised 2026-09-19.
-
-- **`docs/accuracy.png`** — the README's last remaining TODO (line ~190). ⚠️ **Check before acting:**
-  the file exists at `docs/accuracy.png` and the README renders it; the old note claiming it was
-  outstanding was itself stale. Verify what's actually missing before building anything.
 - **Re-record `docs/demo.gif`** — optional polish, not a gap. It has existed since 2026-07-12
   (`5f34b24`), but it pre-dates every feature from v3.5 on: variety, expiration, Reports, the whole
   counting arc, the census, the tour. A re-record needs a NEW capture plan first — the original
   storyboard was deleted when the gif landed, per that file's own lifecycle note.
-- **A per-size Trends price chart** — the sibling of the price-trend fix in PR #37 (item 60).
-- ⚠️ **Eggs' suit buttons are misaligned — realign on EVERY icon** (Jordan's call, 2026-09-05). The two
-  blue suit buttons are off-centre and staggered (`cx=272,cy=356` / `cx=278,cy=376`, right of the
-  `x=256` centre line), and the coordinates are duplicated across the SVG sources, `EggsMascot.razor`,
-  and the rasterized PNGs. Fix the SVG(s) and the component together, then regenerate the PNGs. Full
-  detail and the file list are in `docs/icons/README.md`.
 - ⚠️ **Speech is neither metered nor gated** (found by the phase-7 security gate, 2026-09-19).
   `ElevenLabsTextToSpeech` and `ElevenLabsSpeechToText` are typed `HttpClient`s, not `IChatClient`s, so
   they never reach `MeteredChatClient`: nothing records their cost, nothing charges for them, and
   `RecipeReadAloud.razor` has no `AiErrorText.BlockedReasonAsync` gate (unlike `PushToTalk.razor`). A
-  household at **zero balance** can still burn the host's ElevenLabs quota. The published prices for
-  `TtsSynthesis` and `RealtimeMinute` have been WITHDRAWN from the Settings price list
-  (`CreditPricing.MeteredActions`) so no false statement stands, but the spend gap is still open.
-  Wiring it needs two things the app can't see from inside: a real ElevenLabs invoice to price a read
-  against (the 3-credit figure is an estimate, never a measurement), and a charge point that isn't an
-  `IChatClient`. Jordan's call whether to wire it or leave speech free.
+  household at **zero balance** can still burn the host's ElevenLabs quota — on a box that HAS an ElevenLabs
+  key; the demo box deliberately has none and voices with Piper in-process, so there the exposure was CPU
+  and disk, not dollars. **Narrowed 2026-10-07:** the disk half is closed by the after-write cache trim
+  (Recently closed) and the CPU half is bounded by `PromptInput` capping a pasted recipe at 20,000
+  characters; synthesis was already serialised (`SherpaTtsEngine`). The published prices for
+  `TtsSynthesis` and `RealtimeMinute` stay WITHDRAWN from `CreditPricing.MeteredActions`, so no false
+  statement stands. What remains is the ElevenLabs case on a paid box: wiring it needs a real ElevenLabs
+  invoice to price a read against (the 3-credit figure is an estimate) and a charge point that isn't an
+  `IChatClient`. Jordan's call whether to wire it or leave cloud speech free.
 - **The remediation arc** — all seven phases landed 2026-09-19, designed in `docs/remediation-plan.md`,
   with the review-gate pass on phase 7 written up in its §9. What's left out of that arc is deliberate:
   draining logic out of `.razor` (D1) and EF Migrations (D3), both with reasons in §8.
 
-- **A pre-cap tag stored in decomposed form drops out of dedup.** `FindNearDuplicate` skips a vocabulary
-  entry whose RAW length is over `TagVocabulary.MaxLength`, measured raw on purpose — the cost it bounds
-  is the cost of normalizing, so a cap that normalized first to decide would have already paid it. But
-  `Normalize` shrinks (NFC composes, whitespace collapses), so a legacy tag written before the cap
-  existed — 33 decomposed "é" is 66 characters raw and 33 composed — is inside the cap once normalized
-  and is skipped anyway. That household's dedup stops seeing it and the tag cloud can fragment on a
-  difference nobody can see, which is the exact thing `Normalize` was added to prevent. `Canonicalize`
-  caps what it writes, so only pre-cap rows can be in this state. Pinned by
-  `An_entry_whose_raw_form_is_over_the_cap_is_not_a_dedup_target`. The fix is a one-off normalize-and-
-  rewrite pass over the tag column, which wants EF Migrations (D3) first.
-- **The advisor prompt caps each tag's length but not the tag COUNT.** `AnthropicTagAdvisor` interpolates
-  the whole vocabulary on every tag add, so a household with N tags sends N × 64 bytes per charged call,
-  unbounded in N. Self-inflicted and behind the credit gate, so not the denial of service the candidate
-  cap closed — but the "untrusted input to a charged call" axis is not fully shut until it is bounded.
-  A plain `.Take(…)` silently degrades dedup quality for exactly the households with the most tags, which
-  is the wrong trade; the honest fix is to send the nearest-N by the cheap matcher, which is a change to
-  what the advisor is asked, not just how much.
-- **The recipe request box has no cap, client or server.** `Recipes.razor`'s input goes straight into a
-  charged prompt in `AnthropicRecipeAdvisor`. One gate weaker than the tag path was, since it sits behind
-  `AiErrorText.BlockedReasonAsync`, but it is the same shape and should get the same treatment: a
-  server-side refusal with a visible reason, not just a `maxlength` attribute.
 - **Four pages cannot be read by the razor lift the build rules use.** `MainLayout`, `Accuracy`,
   `GroceryList` and `MealPlanPage` each define a `RenderFragment` with a razor TEMPLATE expression
   (`=> @<div>…`), which the razor compiler turns into C# but a plain brace-match lift cannot. They are
   named in `SourceTree.Unliftable` and asserted to be exactly that set, so a fifth page fails the build
   rather than dropping out of the scan — but they are genuinely unjudged today. None calls a provider.
   If one ever needs judging, move the fragment into a component rather than widening the lift.
+
+- **There is no account deletion.** "Delete all my data" (`UserDataService.cs`) removes the pantry
+  tables, receipt images, the TTS cache, recipe images and API tokens, and deliberately keeps
+  `AiUsages` and `CreditLedger` (the operator's cost record). What it does not touch: the `AspNetUsers`
+  row, the `Household` row, `UserLoginStats` and `ProcessedPaymentEvents` — `HouseholdService.cs:289`
+  says so in as many words ("no account deletion exists yet"). The README's old promise to "delete
+  every trace" was reworded 2026-10-07 to say what the button actually does. A real deletion has to
+  decide what happens to a household's other members, the credit ledger a refund may still need, and
+  the Stripe customer, which is why it is a design item and not a tidy-up.
+
+- **CI's "Publish test status" job has never landed a commit.** It pushes to `master` on every
+  post-merge run and branch protection refuses it every time (run 35926123956: `GH006: Protected
+  branch update failed … 2 of 2 required status checks are expected`), and `ci.yml` turns the refusal
+  into a warning, so `src/ShelfAware.Web/wwwroot/test-status.json` is still the hand-generated
+  2026-09-19 snapshot (`CommitSha ""`, `Branch ""`) — the card §6 of the remediation plan made
+  self-maintaining is not. The fix is a GitHub setting, not a repo change: let the Actions app bypass
+  protection for that path, or have the job open a PR instead. `mutation.yml` is getting the same
+  commit pattern for the mutation score and needs the same bypass, so one setting closes both.
+
+- **The CSP trusts `https://esm.sh` site-wide for one optional feature.** `Program.cs:731-752` allows
+  `script-src https://esm.sh` so the cook-along can load the ElevenLabs SDK, which is off by default.
+  That trusts everything that CDN ever serves, on every page, on every box — and on a BYOK box a
+  compromise there can read `localStorage['shelfaware.ai']`. The honest fix is to vendor the SDK at a
+  pinned version (the worklets already are, see `THIRD-PARTY-NOTICES.md`) or to add the origin only on
+  the page that needs it. Parked because the feature is off by default and the demo box is managed-key.
+
+- **No `ErrorBoundary` anywhere.** Acknowledged in the code at `Cookbook.razor:693` and
+  `Recipes.razor:1091`: an exception that escapes an event handler tears down the whole circuit, and
+  the person sees Blazor's reconnect overlay instead of the page with one broken panel. The handlers
+  catch what they expect, so this is about the unexpected. A boundary per page (or in `MainLayout`
+  around `@Body`) is small; deciding what it renders, and how that reaches the error log, is the work.
+
+- **No clock abstraction in Web.** 113 wall-clock reads in `ShelfAware.Web`, 48 of them the literal
+  `DateOnly.FromDateTime(DateTime.Today)`, and 0 in Core, which takes `today` as a parameter. The
+  Core half is why the engine is testable; the Web half is why page tests cannot pin a date and why
+  the "one prediction" drifts below can exist at all (two `today`s on one page). A `TimeProvider`
+  injected at the composition root is the standard shape; the cost is touching 113 sites in one
+  change, which the rule on partial conversions says is the only way to do it.
+
+- **Three "one prediction, one story" drifts.** (1) `ProductDetail.razor:257` computes "expires in N
+  days" in markup from a second `today` rather than reading it off the `PredictionResult` beside it.
+  (2) `ReportDataService.cs:147` calls `Predict` without `honorQuantity` while `:250` and every page
+  pass it, so a report can disagree with the page it links to about a counted item. (3)
+  `PantryPhoto.razor:732` defaults both flags. Each is the exact shape the CLAUDE.md rule was written
+  for; each is a one-line fix plus the test that pins it, and (2) is the one most likely to be seen.
+
+- **`ElevenLabsSpeechToText.cs:82` has no `OperationCanceledException` arm** while every Anthropic
+  provider in the same project has one (`catch (OperationCanceledException) when
+  (cancellationToken.IsCancellationRequested) { throw; }`, pinned by `ProviderCancellationSiteTests`).
+  A cancelled transcription is logged as a failure and reported as one. That build rule covers the
+  Anthropic sites and the pages, not this `HttpClient` provider, which is how it slipped.
+
+- **`MealPlanJobs.cs:15` promises a test that does not exist.** The comment says the detached runner
+  is covered; nothing under `tests/` exercises it. Either write the test (a job that outlives its
+  circuit, is cancelled with the host, and reports to the right household) or delete the claim — a
+  comment that names a test is a claim in the §6 sense.
+
+- **`coverlet.collector` is referenced by all four test projects and nothing collects coverage.**
+  It was added for the 2026-07-30 audit (`docs/test-audit.md`) and no workflow has passed
+  `--collect:"XPlat Code Coverage"` since. Either wire a coverage step into `ci.yml` (and decide what
+  to do with the number — the mutation score is the one the repo actually trusts) or drop the four
+  references. A dependency nothing uses is a question every reader has to answer again.
+
+- **Two things the suites never reach.** The bUnit suite never renders `Register`, `Login`,
+  `ExternalLogin` or `ChooseHousehold` — the pages a new person meets first, and the ones with the
+  most hand-written auth flow. And `wwwroot/js` holds 19 modules (`theme.js`, `bug-capture.js`,
+  `cookbook-carousel.js`, `voice.js` …) with no JS test tooling at all; the enhanced-nav theme
+  regression in PR #18 was exactly the kind of bug a ten-line test would have held. The account pages
+  are static-rendered, so bUnit can mount them; the JS side needs a runner decision first.
 
 ## Parked, with reasons
 
@@ -145,7 +169,30 @@ and renders `¤3.99` (invariant culture — a systemd service starts with **no**
 first live deploy). Set the droplet's timezone (`timedatectl set-timezone`, or `TZ` in the service
 env) and keep `LANG` in the env file. Runbook step 2 covers both.
 
+⚠️ **Branch protection refuses the test-status commit, and CI reports it as a warning.** Every
+post-merge `ci.yml` run ends with `GH006: Protected branch update failed` from the "Publish test
+status" job (first seen in run 35926123956), so the `/admin` card reads the 2026-09-19 snapshot no
+matter how many PRs merge. It looks green. The one-line fix is on GitHub, not in the repo: in the
+`master` branch ruleset, add the GitHub Actions app to the bypass list (or let the job push a PR).
+`mutation.yml`'s score commit needs the same allowance.
+
 ## Recently closed
+
+- **Tag dedup does not see through Unicode confusables.** — closed 2026-10-07. `TagVocabulary.MatchKey` folds the common Cyrillic and Greek lookalikes (a TR39-style skeleton, the common subset not the full table) to their Latin twins — only when every other letter in the tag is Latin, so a genuinely Cyrillic or Greek tag keeps its own letters. "Ѕoda" ≈ "Soda" is pinned, both directions, in `TagVocabularyTests`.
+- **Advisor prompts interpolate the household's whole vocabulary with no cap.** — closed 2026-10-07. `TagVocabulary.NearestForPrompt` ranks the vocabulary by edit distance between match keys to the candidate (or, for the recipe tag advisor, to the recipe's name and ingredients) and sends the nearest `PromptVocabularyLimit` (200) — not a `.Take`. The limit was first 40; the 2026-10-08 audit raised it far past any real vocabulary, because nearness by spelling is not nearness by meaning ("soda" is nearer "deli" than "soft drink"), so a trim at 40 would have dropped exactly the synonyms the advisor exists to find. The reply is resolved against the list the model saw, and a vocabulary with no tag-sized entry skips the charged call. `TagPromptRankingTests`, plus prompt-shape tests in both advisor suites.
+- **The advisor prompt caps each tag's length but not the tag COUNT.** — closed 2026-10-07. Same change as the vocabulary entry above: bounded at `PromptVocabularyLimit` by nearest-N, in Core.
+- **A pre-cap tag stored in decomposed form drops out of dedup.** — closed 2026-10-07. `TagStoredFormMigration` runs at boot strictly after `AdditiveSchema.Apply`, in one transaction over `ProductTags` and `RecipeTags` across households (raw SQL, not a fifth `IgnoreQueryFilters` site): every value is rewritten to `TagVocabulary.StoredForm` (trimmed, whitespace-collapsed, NFC), a collision on the same owner keeps the earlier row, anything over the cap in any form is left alone and counted, and a second boot rewrites nothing. `Canonicalize` now writes the stored form too, so no new row can need it. Eleven tests in `TagStoredFormMigrationTests`.
+- **The TTS cache is trimmed only at startup, and a free voice fills it ~10× faster.** — closed 2026-10-07. `SpeechCacheBudget` keeps a lock-free running byte total per household (seeded by one scan on the household's first write after boot); a write that crosses `Speech:CacheMegabytes` claims the household's one trim slot and runs the existing eviction sweep detached from the request, which re-measures the drawer and corrects the total. The common case is an interlocked add and a compare — no directory scan on the hot path, which was the cost that parked it. The boot trim is unchanged. Ten tests in `CachingTextToSpeechTests`.
+- **A per-size Trends price chart** — closed 2026-10-07. `PriceSeries.BySize` is the one definition of a product's price series by size, ranked most-bought first; `Dominant` is now defined as its head, so Product Detail's one-size chart and Trends' every-size rows agree by construction. Trends renders one row per (product, size); the year's spend stays per product and spans its size rows. Six Core tests, three bUnit tests.
+- **Eggs' suit buttons are misaligned — realign on EVERY icon** — closed 2026-10-07. Both buttons centred at `cx=256`, `cy=352/372` in `shelfaware-icon.svg` and `EggsMascot.razor` (the two sibling SVGs already had them there); the three served PNGs re-rasterised from the corrected source. `docs/icons/README.md` records the placement.
+- **The recipe request box has no cap, client or server.** — closed 2026-10-07. `PromptInput` in Core is the one answer to how long a prose box may be — the quick update (500), the recipe request (300), a pasted recipe (20,000) — and each page's handler refuses over-length input before its pre-check and before any charged call, with the cap named. The `maxlength` attributes are the courtesy.
+
+- **`docs/accuracy.png`** — verified 2026-10-07: the file exists (since 2026-07-12) and the README
+  renders it. Nothing to do; the item was carried for months on a note that was itself stale.
+- **The model picker offered aliases.** `Settings.razor:1041` listed `claude-sonnet-5` and
+  `claude-opus-4-8`, both aliases, against DESIGN.md §2's "pin versioned IDs, never aliases" — an
+  alias moves under you and the pinned-ID rule exists so a receipt extracted today and one extracted
+  next month ran the same model. Fixed 2026-10-07 on the docs-and-gaps branch.
 
 - **A meal plan charging for meals it does not deliver** — closed 2026-09-19, in two passes. The first
   fixed the gate: it asks whether the balance covers *this act's* price, so a household is refused a plan
@@ -161,7 +208,11 @@ env) and keep `LANG` in the env file. Runbook step 2 covers both.
   say what it delivered, which would silently refund the whole act.
 
 - **Phase-5 cloud deploy** — LIVE on a DigitalOcean droplet since 2026-08-11 (not Azure), via
-  `docs/deploy-droplet.md` + `deploy/`. The demo link points at https://demo.shelfaware.net.
+  `docs/deploy-droplet.md` + `deploy/`. The demo link points at https://demo.shelfaware.net. It runs
+  in **Managed** key mode (`Llm__KeyMode=Managed`, the host's own spend-capped key) with
+  email-confirmed registration and daily caps on new accounts, per-household AI calls and tokens, and
+  box-wide AI calls — the caps are deliberate and stay (Jordan: "it has to stay to keep me safe from
+  bots"). Earlier notes calling it BYOK describe how it launched, not how it runs.
 - **Learning corrected names and brands from receipt review** — the corrected product NAME via the
   alias's product (PR #19, item 53), the corrected BRAND per (merchant, raw text) via PR #46 (item 61).
 - **The ~768–1400px header overflow** — retired by the left sidebar nav rail (PR #21, 2026-08-22).

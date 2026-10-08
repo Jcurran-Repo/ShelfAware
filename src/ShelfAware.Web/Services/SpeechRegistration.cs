@@ -104,10 +104,19 @@ public static class SpeechRegistration
         }
 
         // The cache is what answers ITextToSpeech; it reads ICurrentHousehold (scoped) per call so clips
-        // are filed per household, never shared.
+        // are filed per household, never shared. Its BUDGET is a singleton the transient cache books every
+        // write against, so the cap is kept as the cache grows rather than only at boot — a running total
+        // on a transient would be a running total per request.
+        var budgetBytes = CacheBudgetBytesOf(configuration);
+        if (budgetBytes <= 0)
+            throw new InvalidOperationException(
+                "Speech:CacheMegabytes is 0 (no cache), but a cache directory was given. A box that wants "
+                + "no cache registers none (cacheDirectory: null); one that wants a cache needs a budget.");
+        services.AddSingleton(new SpeechCacheBudget(budgetBytes));
         services.AddTransient(sp => new CachingTextToSpeech(
             resolveProvider(sp),
             cacheDirectory,
+            sp.GetRequiredService<SpeechCacheBudget>(),
             sp.GetRequiredService<ICurrentHousehold>(),
             sp.GetRequiredService<ILogger<CachingTextToSpeech>>()));
         services.AddTransient<ITextToSpeech>(sp => sp.GetRequiredService<CachingTextToSpeech>());
@@ -125,6 +134,14 @@ public static class SpeechRegistration
     /// ElevenLabs.</summary>
     public static EarProvider EarOf(IConfiguration configuration) =>
         configuration.GetValue<EarProvider?>("Speech:Ear") ?? EarProvider.ElevenLabs;
+
+    /// <summary>Each household's speech-cache budget in bytes, from the ONE reading of
+    /// <c>Speech:CacheMegabytes</c> (default 256; zero or less means no cache at all). It is the number
+    /// the after-write trim keeps a household under, and the number the startup sweep in Program.cs
+    /// takes from here too: two readings of the same key is how a box ends up trimming to one cap at
+    /// boot and a different one an hour later.</summary>
+    public static long CacheBudgetBytesOf(IConfiguration configuration) =>
+        (configuration.GetValue<int?>("Speech:CacheMegabytes") ?? 256) * 1024L * 1024L;
 
     private static void ConfigureElevenLabs(IServiceProvider sp, HttpClient http)
     {

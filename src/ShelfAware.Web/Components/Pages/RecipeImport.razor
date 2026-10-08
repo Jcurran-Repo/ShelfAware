@@ -8,7 +8,7 @@
 @inject IHouseholdDbFactory DbFactory
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
-@inject IDemoValve DemoValve
+@inject IManagedCallCaps DemoValve
 @inject NavigationManager Nav
 @inject ILogger<RecipeImport> Logger
 
@@ -41,7 +41,12 @@
 
         <h2>…or paste the text</h2>
         <p class="muted">Copied from a website, a note, or a message.</p>
+        @* ⚠️ maxlength is ONE PAST the cap, unlike the typed boxes: a browser cuts an over-long PASTE silently,
+           so at the cap it would import a recipe missing its last steps with no word said. One past, the
+           handler sees an over-cap paste and refuses it by name — and the attribute still bounds what an
+           oninput bind ships over the circuit, which a paste past the SignalR message limit would drop. *@
         <textarea class="import-paste" @bind="pastedText" @bind:event="oninput" rows="6" disabled="@importing"
+                  maxlength="@(ShelfAware.Core.PromptInput.PastedRecipeMaxLength + 1)"
                   placeholder="Paste a recipe here…" aria-label="Paste recipe text"></textarea>
 
         @if (error is not null)
@@ -233,6 +238,16 @@ else if (phase == Phase.Done)
     private async Task Import()
     {
         if (importing || !CanImport) return;
+        // Server-side input cap on the paste (a photo is bounded by the upload intake instead), before the
+        // pre-check and the charged call: the text is interpolated untruncated and retried once with the
+        // prior output appended, so its length is twice the cost.
+        if (photoBytes is null
+            && ShelfAware.Core.PromptInput.IsOverLength(pastedText, ShelfAware.Core.PromptInput.PastedRecipeMaxLength))
+        {
+            error = ShelfAware.Core.PromptInput.TooLongMessage(ShelfAware.Core.PromptInput.PastedRecipeMaxLength);
+            phase = Phase.Error;
+            return;
+        }
         importing = true;
         error = null;
         phase = Phase.Reading;

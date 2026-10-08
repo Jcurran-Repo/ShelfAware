@@ -15,6 +15,12 @@ public sealed class DemoOptions
     /// the managed demo box reads recipes with a model in this process, so there's nothing to cap.)</summary>
     public int? DailyGlobalCallLimit { get; set; }
 
+    /// <summary>THE one reading of "is this a shared demo box?" for anything that tells a visitor so (Register,
+    /// /privacy): a box-wide call cap is what makes a box shared with strangers rather than a family's own.
+    /// It says nothing about which OTHER limits apply — a surface naming the account cap or a per-household
+    /// allowance asks that option itself, so the sentence can't outlive the setting.</summary>
+    public bool IsSharedDemo => DailyGlobalCallLimit is not null;
+
     /// <summary>Log a Warning the moment the day's global call count crosses this — an early "you're
     /// suddenly getting traffic / cost is accruing" signal, well under the hard cap. It lands in the
     /// server's own logs (journald/stdout) and the /admin <em>Demo box usage</em> panel's threshold tile

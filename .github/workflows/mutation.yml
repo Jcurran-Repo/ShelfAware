@@ -17,8 +17,11 @@ on:
     - cron: '0 6 * * 1'   # Mondays 06:00 UTC
   workflow_dispatch:
 
-# Least privilege: this job only reads the repo and uploads an artifact (the latter
-# uses the Actions runtime token, not GITHUB_TOKEN scopes), so read-only is enough.
+# Least privilege: the measuring job only reads the repo and uploads an artifact (the latter
+# uses the Actions runtime token, not GITHUB_TOKEN scopes), so read-only is the default here.
+# The publish job below needs `contents: write` and declares it for itself alone — permissions are
+# per-job, and the job that runs Stryker must not hold a write token just because the push path
+# needs one.
 permissions:
   contents: read
 
@@ -63,3 +66,108 @@ jobs:
           name: mutation-report
           path: tests/ShelfAware.Tests/StrykerOutput/**/reports/
           if-no-files-found: ignore
+
+  # ⚠️ Any artifact that makes a factual claim about this codebase must be produced by the thing it claims
+  # about (docs/remediation-plan.md §6). The Core mutation score on /admin lives in test-status.json, and
+  # ci.yml — which writes that file — does not run Stryker, so it can only carry the last measured number
+  # forward; left to that alone the tile could sit unchanged for months with nothing saying how old it is
+  # (docs/backlog.md, "carried forward, not re-measured"). This job is the thing that measures the score,
+  # so it is the thing that writes it: the same commit-and-push shape as ci.yml's publish-test-status, with
+  # ONLY the MutationScore field touched — the test counts in that file belong to the run that measured
+  # them, and tools/TestStatusGen is not run here because with no .trx files it would honestly report an
+  # empty suite.
+  #
+  # A GITHUB_TOKEN push does not trigger workflows, so this cannot loop.
+  publish-mutation-score:
+    name: Publish mutation score
+    needs: mutation
+    # always(): a run that FAILED the 100% break threshold still MEASURED a score, and "97.3%" is exactly the
+    # news the tile exists to carry — a tile that only ever publishes green can never deliver bad news. The
+    # guard that matters is the no-report / nothing-testable refusal in the commit step, which separates
+    # "mutants survived" from "Stryker never finished". master only: a dispatch from a branch measures that
+    # branch, and the tile describes master.
+    if: always() && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # The SAME concurrency group as ci.yml's publish-test-status, deliberately: both jobs commit the same
+    # file to master, and a group shared across workflows serialises them so neither rebases over the
+    # other's push mid-flight. cancel-in-progress is false for the same reason as there.
+    concurrency:
+      group: publish-test-status
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+
+      # continue-on-error, so the no-report guard below is REACHABLE (ci.yml learned this the hard way:
+      # a hard download failure ended the job before the guard written for exactly that case ran).
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: mutation-report
+          path: mutation-report
+
+      - name: Commit the measured score if it changed
+        run: |
+          set -euo pipefail
+          target=src/ShelfAware.Web/wwwroot/test-status.json
+
+          report="$(find mutation-report -name mutation-report.json 2>/dev/null | sort | tail -1)"
+          if [ -z "$report" ] || [ ! -f "$report" ]; then
+            echo "::warning::No mutation report in the artifact (Stryker probably did not finish) — nothing to publish."
+            exit 0
+          fi
+
+          # Stryker.NET's own arithmetic, so the number here is the one its report shows: detected is
+          # Killed + Timeout, undetected is Survived + NoCoverage, and the score is detected over both.
+          # CompileError and Ignored are outside the score, as the HTML report's own summary treats them.
+          detected=$(jq '[.files[]?.mutants[]? | select(.status == "Killed" or .status == "Timeout")] | length' "$report")
+          undetected=$(jq '[.files[]?.mutants[]? | select(.status == "Survived" or .status == "NoCoverage")] | length' "$report")
+          valid=$((detected + undetected))
+
+          # ⚠️ A score over nothing is not a measurement. mutation-pr.yml fails a PR on this; a weekly run
+          # that tested nothing is a broken run, and the right answer is to leave the last real number
+          # standing rather than overwrite it with a 100% that means "undefined".
+          if [ "$valid" -eq 0 ]; then
+            echo "::warning::The report holds no testable mutants (detected 0, undetected 0) — not a measurement; leaving the published score alone."
+            exit 0
+          fi
+          score=$(jq -n --argjson d "$detected" --argjson v "$valid" '(($d / $v) * 10000 | round) / 100')
+          echo "Measured Core mutation score: $score% ($detected detected of $valid testable mutants; $undetected undetected)"
+
+          if [ ! -f "$target" ]; then
+            echo "::warning::$target does not exist on master — ci.yml's snapshot has not landed yet, so there is nothing to put the score into."
+            exit 0
+          fi
+          # One field. GeneratedAt and the test counts stay as the run that measured them wrote them.
+          tmp=$(mktemp)
+          jq --argjson m "$score" '.MutationScore = $m' "$target" > "$tmp"
+          mv "$tmp" "$target"
+
+          if git diff --quiet -- "$target"; then
+            echo "Mutation score unchanged ($score%) — nothing to commit."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$target"
+          git commit \
+            -m "ci: refresh the Core mutation score ($score%)" \
+            -m "Written by the weekly run that measured it, not by hand. See .github/workflows/mutation.yml."
+
+          # One rebase retry, and a failure is a warning annotation rather than a red run — the same posture
+          # as ci.yml's snapshot push, for the same reason: a red badge for a docs-shaped file is how people
+          # learn to stop reading the badge, and the next weekly run measures again anyway.
+          # ⚠️ Until the GitHub Actions app is granted the branch-protection bypass on master (Settings →
+          # Branches → master → "Allow specified actors to bypass required pull requests"), this push is
+          # refused with GH006 exactly as ci.yml's is (run 35926123956) and lands as the warning below. That
+          # is one GitHub setting only the repository owner can change; nothing in this file can.
+          # `|| true` on the rebase: under `set -e` a bare failing command aborts the step before the
+          # warning is ever reached.
+          if ! git push; then
+            git pull --rebase --autostash || true
+            git push || echo "::warning::Could not push the mutation score (branch protection refuses the Actions app until it is granted the bypass — see the comment above). The next weekly run will measure and try again."
+          fi

@@ -38,9 +38,10 @@ public static class AiErrorText
             : "subscribe in Settings, or ask for something smaller.");
 
     /// <summary>The pre-call gate for a UI surface: null when this circuit may run <paramref name="act"/>
-    /// now, otherwise the reason to SHOW (and skip the attempt). A managed household is blocked when the
-    /// box-wide demo valve has hit today's cap (<see cref="IDemoValve"/> — a no-op unless a Demo cap is
-    /// configured), else allowed when <see cref="IEntitlements.CheckAiAsync"/> says the balance covers the
+    /// now, otherwise the reason to SHOW (and skip the attempt). A managed household is blocked when one of
+    /// the managed-mode caps has hit for today (<see cref="IManagedCallCaps"/>: the household's own daily
+    /// allowance, then the box-wide demo valve — no-ops where neither is configured), else allowed when
+    /// <see cref="IEntitlements.CheckAiAsync"/> says the balance covers the
     /// act (which also runs the lazy allowance); when it does not, the next step is tier-specific — a
     /// balance that covers something but not this wants shortening or topping up, a spent Free trial wants
     /// a subscription, a spent Aware balance wants a pack. A BYOK/self-host circuit just needs a key.
@@ -53,16 +54,16 @@ public static class AiErrorText
     /// still lives in <see cref="MeteredChatClient"/>; this only turns a refusal into a message and avoids
     /// a doomed call, and the two now ask <see cref="IEntitlements.CheckAiAsync"/> the same question.</para></summary>
     public static async ValueTask<string?> BlockedReasonAsync(
-        IEntitlements entitlements, CircuitAiSettings settings, IDemoValve demoValve,
+        IEntitlements entitlements, CircuitAiSettings settings, IManagedCallCaps demoValve,
         ServiceAction act, int units = 1, CancellationToken cancellationToken = default)
     {
         if (settings.Managed)
         {
-            // Box-wide demo cap first — checked in the same position the MeteredChatClient gate checks it, so
-            // the pre-check and the server-side gate agree on this reason. On a family box it's a no-op.
-            // (The per-household Llm:DailyCallLimit is also enforced by the gate, but isn't mirrored here —
-            // a pre-existing pre-check gap: exhausting it falls back to the surface's generic "try again"
-            // rather than an honest message. Worth a follow-up twin for AiUsageMeter.)
+            // The managed-mode caps first — the per-household daily allowance, then the box-wide demo valve —
+            // in the same position and order the MeteredChatClient gate checks them, so the pre-check and the
+            // server-side gate agree on this reason. On a family box both are no-ops. (Until 2026-10-07 only
+            // the box-wide valve was mirrored here, so a household that had spent its own allowance was shown
+            // the surface's generic "try again" — and retrying was the one thing that could not help.)
             if (await demoValve.CallBlockedMessageAsync(cancellationToken) is { } demoBlocked) return demoBlocked;
 
             var allowance = await entitlements.CheckAiAsync(act, units, cancellationToken);

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Billing;
+using ShelfAware.Core.Tagging;
 
 namespace ShelfAware.Llm;
 
@@ -39,9 +40,15 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
         try
         {
             var ingredients = ingredientNames.Count > 0 ? string.Join(", ", ingredientNames) : "(not listed)";
-            var known = knownTags.Count > 0
+            // ⚠️ Bounded, and bounded by nearness: the household's whole vocabulary used to ride into
+            // every charged call here, unbounded in its size. The vocabulary ranks its own entries
+            // against the recipe's name and every ingredient, so the tag whose spelling is already in
+            // the recipe ("Pasta" for a pasta dish) is sent whatever position it sorts to, and a
+            // vocabulary under the limit is sent whole — see TagVocabulary.PromptVocabularyLimit.
+            var sent = TagVocabulary.NearestForPrompt([recipeName, .. ingredientNames], knownTags);
+            var known = sent.Count > 0
                 ? "Prefer these existing tags where they fit, so the vocabulary stays tidy: "
-                  + string.Join(", ", knownTags) + ".\n"
+                  + string.Join(", ", sent) + ".\n"
                 : "";
 
             var prompt =

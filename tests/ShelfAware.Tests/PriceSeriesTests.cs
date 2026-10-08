@@ -175,4 +175,99 @@ public class PriceSeriesTests
 
         Assert.Equal(new[] { 3.00m, 3.60m }, PriceSeries.Dominant(points)!.Points.Select(p => p.UnitPrice));
     }
+
+    // ------------------------------------------------------------------------------- BySize
+
+    [Fact]
+    public void Every_size_gets_its_own_series_most_bought_first()
+    {
+        // The milk case: a gallon and a half-gallon are two price stories, never one zig-zag line.
+        // Trends draws one row per entry; the gallon (two trips) ranks first.
+        var points = new List<PricePoint>
+        {
+            new("64 fl oz", D(15), 2.29m),
+            new("1 gal", D(8), 3.59m),
+            new("1 gal", D(1), 3.49m),
+        };
+
+        var bySize = PriceSeries.BySize(points);
+
+        Assert.Equal(["1 gal", "64 fl oz"], bySize.Select(s => s.SizeKey));
+        Assert.Equal([3.49m, 3.59m], bySize[0].Points.Select(p => p.UnitPrice)); // oldest first
+        Assert.Equal([2.29m], bySize[1].Points.Select(p => p.UnitPrice));
+    }
+
+    [Fact]
+    public void A_single_size_product_is_one_series()
+    {
+        var bySize = PriceSeries.BySize([new("12 oz", D(1), 4.99m), new("12 OZ ", D(9), 5.19m)]);
+
+        var only = Assert.Single(bySize);
+        Assert.Equal("12 oz", only.SizeKey); // the bucket key folds case and whitespace
+        Assert.Equal([4.99m, 5.19m], only.Points.Select(p => p.UnitPrice));
+    }
+
+    [Fact]
+    public void Unpriced_lines_are_excluded_from_every_size_not_just_the_dominant_one()
+    {
+        // A $0 coupon line on the SECOND size must not become a point on its row either — and a size
+        // whose only line is $0 is not a size the product was priced in, so it gets no series at all.
+        var points = new List<PricePoint>
+        {
+            new("1 gal", D(1), 3.49m), new("1 gal", D(8), 3.59m),
+            new("64 fl oz", D(15), 0m), new("64 fl oz", D(22), 2.29m),
+            new("32 fl oz", D(22), 0m),
+        };
+
+        var bySize = PriceSeries.BySize(points);
+
+        Assert.Equal(["1 gal", "64 fl oz"], bySize.Select(s => s.SizeKey));
+        Assert.Equal([2.29m], bySize[1].Points.Select(p => p.UnitPrice));
+    }
+
+    [Fact]
+    public void Each_size_series_collapses_its_own_trips_and_runs_oldest_first()
+    {
+        // The trip rule is per bucket, not only for the winner: the half-gallon's two same-day lines
+        // are one trip at their average, and its points sort by date regardless of input order.
+        var points = new List<PricePoint>
+        {
+            new("1 gal", D(1), 3.49m), new("1 gal", D(8), 3.59m), new("1 gal", D(15), 3.69m),
+            new("64 fl oz", D(20), 2.40m),
+            new("64 fl oz", D(10), 2.20m), new("64 fl oz", D(10), 2.40m),
+        };
+
+        var halfGallon = PriceSeries.BySize(points)[1];
+
+        Assert.Equal("64 fl oz", halfGallon.SizeKey);
+        Assert.Equal([2.30m, 2.40m], halfGallon.Points.Select(p => p.UnitPrice));
+        Assert.Equal(new DateOnly?[] { D(10), D(20) }, halfGallon.Points.Select(p => p.Date));
+    }
+
+    [Fact]
+    public void No_positive_price_means_no_series_at_all()
+    {
+        Assert.Empty(PriceSeries.BySize([]));
+        Assert.Empty(PriceSeries.BySize([new("box", D(1), 0m), new("box", D(2), -2m)]));
+    }
+
+    [Fact]
+    public void Dominant_is_the_head_of_BySize_so_one_chart_and_many_can_never_disagree()
+    {
+        // Product Detail charts Dominant; Trends charts BySize. The one is DEFINED as the other's first
+        // entry, bucket count included — the pages agree by construction, not by parallel arithmetic.
+        var points = new List<PricePoint>
+        {
+            new(null, D(1), 0.25m), new("each", D(10), 0.28m),
+            new("2 lb bag", D(20), 8.00m),
+            new("5 lb bag", D(5), 0m),
+        };
+
+        var bySize = PriceSeries.BySize(points);
+        var dominant = PriceSeries.Dominant(points)!;
+
+        Assert.Equal(bySize[0].SizeKey, dominant.SizeKey);
+        Assert.Equal(bySize[0].Points, dominant.Points);
+        Assert.Equal(bySize.Count, dominant.BucketCount);
+    }
 }

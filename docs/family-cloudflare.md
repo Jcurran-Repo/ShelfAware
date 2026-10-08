@@ -1,7 +1,7 @@
 # The family instance behind Cloudflare — tunnel + Access
 
 How the family site runs: the same ShelfAware publish that has served the tailnet since
-July stays exactly where it is (`C:\Users\Jorcu\ShelfAware-server`, port 5179, started
+July stays exactly where it is (`C:\Users\<you>\ShelfAware-server`, port 5179, started
 at boot by the "ShelfAware Server" scheduled task), and a **Cloudflare Tunnel** makes it
 reachable at **https://family.shelfaware.net** from anywhere — behind **Cloudflare
 Access**, so only allow-listed emails ever see the login page. Set up 2026-08-12,

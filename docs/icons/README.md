@@ -25,20 +25,20 @@ Regenerate by rasterizing `shelfaware-icon.svg` at those sizes with any SVG→PN
 The manifest is served from `Program.cs` (`GET /manifest.webmanifest`); the head wiring lives in
 `Components/App.razor`.
 
-## ⚠️ Known issue — Eggs' buttons are misaligned (realign on EVERY icon)
+## The suit buttons — one placement, three copies
 
-The two blue suit buttons are off-centre and staggered: in `shelfaware-icon.svg` they sit at
-`cx=272,cy=356` and `cx=278,cy=376`, so they're to the RIGHT of the body/bow-tie centre line
-(`x=256`) and don't run straight down the suit. They should be centred and vertically aligned
-(centred under the bow tie). **This must be fixed on every icon that carries them**, because the
-coordinates are duplicated in several places:
+The two blue suit buttons sit on the body's centre line, straight down the shirt under the bow tie:
+`cx=256, cy=352` and `cx=256, cy=372` (r=4.5). Until 2026-10-07 they were off-centre and staggered
+(`cx=272,cy=356` / `cx=278,cy=376`, to the right of the `x=256` centre line); realigned on every copy
+that day. The coordinates are deliberately duplicated — the mascot component carries the icon's
+artwork inline so only its face varies — so a change to them is a change to **all** of:
 
-- `docs/icons/shelfaware-icon.svg` (and `shelfaware-icon-gold-plain.svg`) — the vector sources
-- `src/ShelfAware.Web/Components/EggsMascot.razor` — the inline mood-mascot (same two `<circle>`s)
-- `wwwroot/icons/icon-512.png` · `icon-192.png` · `apple-touch-icon.png` — re-rasterize after the SVG fix
+- `docs/icons/shelfaware-icon.svg` and `shelfaware-icon-gold-plain.svg` — the vector sources
+- `src/ShelfAware.Web/Components/EggsMascot.razor` — the inline mood-mascot (the same two `<circle>`s)
+- `wwwroot/icons/icon-512.png` · `icon-192.png` · `apple-touch-icon.png` — re-rasterize after any SVG edit
 
-Not yet done — a polish pass. When it's fixed, correct the SVG(s) + the component together (they
-share the exact coordinates) and regenerate the PNGs.
+The served PNGs were last regenerated 2026-10-07 from `shelfaware-icon.svg` with CairoSVG
+(`cairosvg.svg2png(output_width=N, output_height=N)` at 512/192/180, saved as RGBA).
 
 ## Earlier explorations (kept for reference)
 

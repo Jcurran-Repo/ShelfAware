@@ -25,6 +25,18 @@
                 <strong>cook-along</strong> is how you drive it with your hands full.
             </p>
         }
+        else
+        {
+            @* A keyed box — the managed demo, or a visitor whose key has landed — is ready to read receipts
+               right now, and that is the loop everything else hangs off. Until 2026-10-07 the only mention of
+               receipts lived inside the keyless branch above, so the one kind of box where upload works on the
+               first click was the one that never said so. *@
+            <p>
+                Start with a receipt: photograph a paper one or upload an order screenshot at
+                <a href="/receipt">Upload</a>. The lines are read and matched for you, and the predictions
+                begin after a couple of trips.
+            </p>
+        }
 
         @if (CatalogEmpty)
         {
@@ -34,7 +46,14 @@
         <p>Not sure where to start? The walkthrough visits each part of the app in turn — you can close it at any point.</p>
 
         <div class="onboarding-actions">
-            <button class="secondary" @onclick="OpenSettings">Open Settings</button>
+            @if (AiSettings.HasKey)
+            {
+                <button @onclick="OpenUpload">Upload a receipt</button>
+            }
+            else
+            {
+                <button class="secondary" @onclick="OpenSettings">Open Settings</button>
+            }
             @if (CatalogEmpty)
             {
                 <button @onclick="LoadSample" disabled="@seeding">@(seeding ? "Loading…" : "Load sample data")</button>
@@ -78,6 +97,8 @@
     }
 
     private void OpenSettings() => Nav.NavigateTo("/settings");
+
+    private void OpenUpload() => Nav.NavigateTo("/receipt");
 
     private async Task LoadSample()
     {

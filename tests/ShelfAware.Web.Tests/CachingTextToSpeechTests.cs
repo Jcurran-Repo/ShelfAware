@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Speech;
 using ShelfAware.Web.Data;
@@ -20,12 +21,21 @@ public sealed class CachingTextToSpeechTests : IDisposable
         if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
     }
 
-    // Clips are filed per household — the same text for a DIFFERENT household is a different drawer.
-    private CachingTextToSpeech Cache(ITextToSpeech inner, string? household = "household-a") =>
-        new(inner, _dir, new FakeCurrentHousehold(household), NullLogger<CachingTextToSpeech>.Instance);
+    /// <summary>The production budget, shared by every cache this test builds the way the singleton is
+    /// shared in the app — so the after-write accounting runs under every test here, and only a test that
+    /// is ABOUT the cap (and hands in a small budget of its own) ever sees a trim.</summary>
+    private readonly SpeechCacheBudget _budget = new(maxBytesPerHousehold: 256L * 1024 * 1024);
 
-    /// <summary>A provider that counts what it was asked to synthesize and hands back canned audio.</summary>
-    private sealed class FakeTts(string fingerprint = "voice-a", bool succeed = true) : ITextToSpeech
+    // Clips are filed per household — the same text for a DIFFERENT household is a different drawer.
+    private CachingTextToSpeech Cache(
+        ITextToSpeech inner, string? household = "household-a",
+        SpeechCacheBudget? budget = null, ILogger<CachingTextToSpeech>? logger = null) =>
+        new(inner, _dir, budget ?? _budget, new FakeCurrentHousehold(household),
+            logger ?? NullLogger<CachingTextToSpeech>.Instance);
+
+    /// <summary>A provider that counts what it was asked to synthesize and hands back canned audio of
+    /// <paramref name="clipBytes"/> bytes — sized by the cap tests, which count what lands on disk.</summary>
+    private sealed class FakeTts(string fingerprint = "voice-a", bool succeed = true, int clipBytes = 4) : ITextToSpeech
     {
         public int Calls { get; private set; }
         public List<string> Texts { get; } = [];
@@ -39,8 +49,10 @@ public sealed class CachingTextToSpeechTests : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             Calls++;
             Texts.Add(text);
+            var audio = new byte[clipBytes];
+            audio.AsSpan().Fill(1);
             return Task.FromResult(succeed
-                ? TextToSpeechResult.Ok([1, 2, 3, 4], "audio/mpeg")
+                ? TextToSpeechResult.Ok(audio, "audio/mpeg")
                 : TextToSpeechResult.Fail("provider is down"));
         }
     }
@@ -296,6 +308,244 @@ public sealed class CachingTextToSpeechTests : IDisposable
         return folder;
     }
 
+    /// <summary>A clip planted straight into a drawer, <paramref name="ageHours"/> old so the oldest-first
+    /// order is deterministic rather than a matter of how fast the test runs.</summary>
+    private string Planted(string name, int bytes, int ageHours, string household = "household-a")
+    {
+        var path = Path.Combine(Drawer(household), name + ".audio");
+        File.WriteAllBytes(path, new byte[bytes]);
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddHours(-ageHours));
+        return path;
+    }
+
+    /// <summary>
+    /// Watches the after-write trim through its own log, and can hold it or fault it at its first line.
+    /// The trim is detached and touches nothing but the disk, so this is the only portable way to put a
+    /// second write, a cancellation or a failure provably INSIDE a trim's window — a file lock or a
+    /// permission bit behaves differently on the PC that runs these tests than on the box that runs CI,
+    /// and a seam added to the code for a test's sake would be a seam.
+    /// </summary>
+    private sealed class TrimProbe : ILogger<CachingTextToSpeech>
+    {
+        /// <summary>The tail of the one Debug line the detached trim logs as it starts, and nothing else logs.</summary>
+        private const string StartLine = "; trimming it.";
+        private int _started;
+
+        public int TrimsStarted => Volatile.Read(ref _started);
+        public List<string> Errors { get; } = [];
+
+        /// <summary>When set, every trim blocks at its first line until this is released.</summary>
+        public SemaphoreSlim? HoldAt { get; init; }
+
+        /// <summary>How many trims, counting from the first, throw at their first line — the fault the
+        /// detached task's last line of defence exists for.</summary>
+        public int FaultFirstStarts { get; init; }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            if (logLevel == LogLevel.Error) lock (Errors) Errors.Add(message);
+            if (!message.EndsWith(StartLine, StringComparison.Ordinal)) return;
+
+            var ordinal = Interlocked.Increment(ref _started);
+            HoldAt?.Wait();
+            if (ordinal <= FaultFirstStarts)
+                throw new InvalidOperationException("The disk did something the sweep did not foresee.");
+        }
+    }
+
+    // ⚠️ The after-write trim. The cap used to be enforced only at boot, and a free voice writing WAV at
+    // ~48 KB a second ran a household far past it between restarts. What follows is what "kept under
+    // budget as it grows" means, one fact at a time — each against the real disk, with the cap sized so
+    // the arithmetic is readable: clips of 100 bytes against a cap of 250.
+
+    [Fact]
+    public async Task A_write_that_takes_a_household_over_budget_trims_its_oldest_clips()
+    {
+        var old = Planted("old", 100, ageHours: 3);
+        var middle = Planted("middle", 100, ageHours: 2);
+        var budget = new SpeechCacheBudget(maxBytesPerHousehold: 250);
+
+        var result = await Cache(new FakeTts(clipBytes: 100), budget: budget).SynthesizeAsync("Step 1. Sear the chicken.");
+        await budget.WhenIdleAsync();
+
+        Assert.True(result.Success);
+        Assert.False(File.Exists(old));    // 300 > 250: the oldest goes...
+        Assert.True(File.Exists(middle));  // ...and only the oldest, because 200 fits
+        Assert.Equal(2, Directory.GetFiles(Drawer(), "*.audio").Length);
+    }
+
+    [Fact]
+    public async Task An_after_write_trim_leaves_headroom_so_the_next_clip_does_not_start_another()
+    {
+        // Nine 100-byte clips against a cap of 1000, then a 150-byte write: 1050. A sweep to the cap stops
+        // at 950, one clip from crossing again — every later synthesis would start a full scan and sort to
+        // delete one file. The sweep stops under nine-tenths of the cap (900) instead: two clips go.
+        for (var i = 0; i < 9; i++) Planted($"clip-{i}", 100, ageHours: 20 - i);
+        var budget = new SpeechCacheBudget(maxBytesPerHousehold: 1000);
+
+        await Cache(new FakeTts(clipBytes: 150), budget: budget).SynthesizeAsync("Step 1. Sear the chicken.");
+        await budget.WhenIdleAsync();
+
+        Assert.Equal(900, CachingTextToSpeech.AfterWriteTrimTarget(1000));
+        Assert.Equal(8, Directory.GetFiles(Drawer(), "*.audio").Length);
+        Assert.Equal(850, budget.BytesHeldBy("household-a"));
+    }
+
+    [Fact]
+    public async Task A_write_under_budget_is_an_add_and_a_compare_not_a_scan()
+    {
+        // The first write after boot measures the drawer — the ONE scan a household pays. After it, a
+        // clip planted behind the ledger's back is invisible to the write path: a write that scanned would
+        // find the drawer five times over budget and sweep the planted clip out as its oldest.
+        var budget = new SpeechCacheBudget(maxBytesPerHousehold: 1000);
+        var cache = Cache(new FakeTts(), budget: budget);
+        await cache.SynthesizeAsync("Step 1. Sear the chicken.");
+        var planted = Planted("behind-the-ledger", 5000, ageHours: 3);
+
+        await cache.SynthesizeAsync("Step 2. Rest it.");
+        await budget.WhenIdleAsync();
+
+        Assert.True(File.Exists(planted));
+        Assert.Equal(8, budget.BytesHeldBy("household-a")); // what it added up, not what it would have found
+    }
+
+    [Fact]
+    public async Task Two_crossing_writes_at_once_start_one_trim()
+    {
+        var old = Planted("old", 100, ageHours: 3);
+        var middle = Planted("middle", 100, ageHours: 2);
+        var budget = new SpeechCacheBudget(maxBytesPerHousehold: 250);
+        using var hold = new SemaphoreSlim(0);
+        var probe = new TrimProbe { HoldAt = hold };
+        var cache = Cache(new FakeTts(clipBytes: 100), budget: budget, logger: probe);
+
+        // The first write crosses and claims the household's trim, which is held at its first line — so
+        // the second write crosses while that trim is provably still in flight. Not a race the test
+        // hopes to win: the claim is made inside the first call, before it returns.
+        await cache.SynthesizeAsync("Step 1. Sear the chicken.");
+        await cache.SynthesizeAsync("Step 2. Rest it.");
+        hold.Release();
+        await budget.WhenIdleAsync();
+
+        Assert.Equal(1, probe.TrimsStarted);
+        // The one trim weighed everything that had landed by the time it looked: 400, down to 200.
+        Assert.False(File.Exists(old));
+        Assert.False(File.Exists(middle));
+        Assert.Equal(2, Directory.GetFiles(Drawer(), "*.audio").Length);
+        // The total errs HIGH here, by design: the second clip was charged after the trim took its
+        // snapshot (300) AND was on disk when the trim weighed the drawer, so it is counted by both —
+        // 400 − 300 + 200. High is the safe direction (a trim runs early and re-reads the truth); the
+        // alternative, snapshotting after the scan, can count a clip in neither and never notice.
+        Assert.Equal(300, budget.BytesHeldBy("household-a"));
+    }
+
+    [Fact]
+    public async Task The_running_total_is_corrected_to_what_the_trim_left_on_disk()
+    {
+        Planted("old", 100, ageHours: 3);
+        var middle = Planted("middle", 100, ageHours: 2);
+        var budget = new SpeechCacheBudget(maxBytesPerHousehold: 250);
+        var cache = Cache(new FakeTts(clipBytes: 100), budget: budget);
+
+        await cache.SynthesizeAsync("Step 1. Sear the chicken.");
+        await budget.WhenIdleAsync();
+        Assert.Equal(200, budget.BytesHeldBy("household-a")); // 300 measured, 100 swept, 200 on disk
+
+        // ...and the next crossing is judged from the corrected total, not the stale one: 200 + 100 is
+        // over again, so the next-oldest goes and the total lands on what the disk holds, again.
+        await cache.SynthesizeAsync("Step 2. Rest it.");
+        await budget.WhenIdleAsync();
+        Assert.False(File.Exists(middle));
+        Assert.Equal(200, budget.BytesHeldBy("household-a"));
+        Assert.Equal(2, Directory.GetFiles(Drawer(), "*.audio").Length);
+    }
+
+    [Fact]
+    public async Task A_household_that_never_wrote_is_left_as_the_startup_trim_left_it()
+    {
+        // B is over budget but has not spoken since boot. A's writes are A's business: B is neither
+        // measured nor swept, because the startup sweep is the only one a silent household gets.
+        var budget = new SpeechCacheBudget(maxBytesPerHousehold: 250);
+        var bOld = Planted("b-old", 200, ageHours: 3, household: "household-b");
+        var bNew = Planted("b-new", 200, ageHours: 2, household: "household-b");
+
+        await Cache(new FakeTts(clipBytes: 100), household: "household-a", budget: budget).SynthesizeAsync("Step 1. Sear the chicken.");
+        await budget.WhenIdleAsync();
+
+        Assert.True(File.Exists(bOld));
+        Assert.True(File.Exists(bNew));
+        Assert.Equal(0, budget.BytesHeldBy("household-b"));
+        Assert.Equal(100, budget.BytesHeldBy("household-a"));
+    }
+
+    [Fact]
+    public async Task Cancelling_the_request_that_crossed_the_cap_does_not_cancel_the_trim()
+    {
+        var old = Planted("old", 100, ageHours: 3);
+        Planted("middle", 100, ageHours: 2);
+        var budget = new SpeechCacheBudget(maxBytesPerHousehold: 250);
+        using var hold = new SemaphoreSlim(0);
+        var cache = Cache(new FakeTts(clipBytes: 100), budget: budget, logger: new TrimProbe { HoldAt = hold });
+        using var cts = new CancellationTokenSource();
+
+        // The write succeeds and its trim starts; the request is then cancelled while the trim is held at
+        // its first line, before it has touched the disk. A trim running on the request's token would die
+        // right here, and the household would sit over budget with nothing scheduled to notice.
+        await cache.SynthesizeAsync("Step 1. Sear the chicken.", null, cts.Token);
+        await cts.CancelAsync();
+        hold.Release();
+        await budget.WhenIdleAsync();
+
+        Assert.False(File.Exists(old));
+    }
+
+    [Fact]
+    public async Task A_trim_that_fails_is_logged_and_the_synthesis_that_caused_it_is_unaffected()
+    {
+        // The detached trim's last line of defence, and what has to survive it: the caller's audio (already
+        // in hand), an Error in the log rather than an unobserved task fault, and the household's trim
+        // slot — a failed trim that kept it would make this household untrimmable until a restart.
+        var old = Planted("old", 100, ageHours: 3);
+        Planted("middle", 100, ageHours: 2);
+        var budget = new SpeechCacheBudget(maxBytesPerHousehold: 250);
+        var probe = new TrimProbe { FaultFirstStarts = 1 };
+        var cache = Cache(new FakeTts(clipBytes: 100), budget: budget, logger: probe);
+
+        var first = await cache.SynthesizeAsync("Step 1. Sear the chicken.");
+        await budget.WhenIdleAsync();
+        Assert.True(first.Success);
+        Assert.Single(probe.Errors);
+        Assert.True(File.Exists(old)); // the fault came before the disk; nothing was half-swept
+
+        // The slot was released: the next crossing write trims, and that trim weighs the lot.
+        var second = await cache.SynthesizeAsync("Step 2. Rest it.");
+        await budget.WhenIdleAsync();
+        Assert.True(second.Success);
+        Assert.Equal(2, probe.TrimsStarted);
+        Assert.False(File.Exists(old));
+        Assert.Equal(200, budget.BytesHeldBy("household-a"));
+    }
+
+    [Fact]
+    public async Task Deleting_a_household_forgets_its_running_total()
+    {
+        // Otherwise the total would outlive the clips it counted, and the household's next write would
+        // look over budget and sweep an empty drawer.
+        var budget = new SpeechCacheBudget(maxBytesPerHousehold: 250);
+        var cache = Cache(new FakeTts(clipBytes: 100), budget: budget);
+        await cache.SynthesizeAsync("Step 1. Sear the chicken.");
+        Assert.Equal(100, budget.BytesHeldBy("household-a"));
+
+        Assert.True(cache.DeleteHousehold("household-a"));
+
+        Assert.Equal(0, budget.BytesHeldBy("household-a"));
+    }
+
     [Fact]
     public void Trim_leaves_a_cache_that_is_under_budget_alone()
     {
@@ -366,6 +616,41 @@ public sealed class CachingTextToSpeechTests : IDisposable
 
         Assert.IsType<CachingTextToSpeech>(scope.ServiceProvider.GetRequiredService<ITextToSpeech>());
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ISpeechToText>());
+        // ...and the budget it is kept under is ONE singleton, or every request would keep its own total.
+        Assert.Same(provider.GetRequiredService<SpeechCacheBudget>(), scope.ServiceProvider.GetRequiredService<SpeechCacheBudget>());
+    }
+
+    // The cap the after-write trim keeps a household under is the configured one, read in one place.
+    [Fact]
+    public void The_cache_is_kept_under_Speech_CacheMegabytes()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddScoped<IVoiceCredentials>(_ => new StubVoiceCredentials());
+        services.AddScoped<ICurrentHousehold>(_ => new FakeCurrentHousehold());
+        services.AddSpeech(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Speech:CacheMegabytes"] = "3" }).Build(), _dir);
+
+        using var provider = services.BuildServiceProvider(validateScopes: true);
+
+        Assert.Equal(3L * 1024 * 1024, provider.GetRequiredService<SpeechCacheBudget>().MaxBytesPerHousehold);
+    }
+
+    // A directory with no budget is a contradiction between two readings of the same setting — the kind
+    // of disagreement that should refuse to boot rather than pick one.
+    [Fact]
+    public void A_cache_directory_with_a_budget_of_nothing_is_refused_at_registration()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddScoped<IVoiceCredentials>(_ => new StubVoiceCredentials());
+        services.AddScoped<ICurrentHousehold>(_ => new FakeCurrentHousehold());
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.AddSpeech(
+            new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { ["Speech:CacheMegabytes"] = "0" }).Build(), _dir));
+
+        Assert.Contains("Speech:CacheMegabytes", ex.Message);
     }
 
     // Speech:CacheMegabytes = 0 means OFF. Registering the cache anyway and emptying it at each boot would
@@ -383,6 +668,7 @@ public sealed class CachingTextToSpeechTests : IDisposable
         using var scope = provider.CreateScope();
 
         Assert.IsNotType<CachingTextToSpeech>(scope.ServiceProvider.GetRequiredService<ITextToSpeech>());
+        Assert.Null(provider.GetService<SpeechCacheBudget>()); // nothing to keep under budget, so no budget
     }
 
     // Speech:Provider selects the TTS provider behind the cache. It's still the cache that answers

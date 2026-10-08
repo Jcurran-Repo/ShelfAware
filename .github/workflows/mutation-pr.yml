@@ -86,6 +86,31 @@ jobs:
         working-directory: tests/ShelfAware.Tests
         run: dotnet stryker --since:"$BASE_SHA"
 
+      # ⚠️ Reach guard. Stryker exits 0 — and this check went GREEN — on a PR whose only Core file had every
+      # one of its mutants fail to compile: it logged "0 total mutants will be tested" and "unable to
+      # calculate a mutation score", wrote a report with nothing testable in it, and reported no failure,
+      # because a score over zero mutants is undefined rather than low. Found 2026-09-19 on WaveAudio.cs
+      # (34 mutants, 34 CompileError, check green — docs/backlog.md). A gate that said yes to a file it had
+      # not read is the hole; this is the floor under it. CompileError and Ignored are the two statuses
+      # that mean "could not be tested"; every other status means a test was run against the mutant.
+      # Runs only when the Stryker step succeeded (the implicit success() of a plain `if:`), which is
+      # exactly the case the hole lives in — a red Stryker step already has the job.
+      - name: Refuse a green run that tested nothing
+        if: steps.scope.outputs.core == 'true'
+        run: |
+          report="$(find tests/ShelfAware.Tests/StrykerOutput -path '*/reports/mutation-report.json' 2>/dev/null | sort | tail -1)"
+          if [ -z "$report" ] || [ ! -f "$report" ]; then
+            echo "::error::Stryker exited 0 but wrote no JSON report, so this gate cannot say what it tested. Refusing to pass a Core change on nothing — see docs/mutation-testing.md § 'Known limitation'."
+            exit 1
+          fi
+          total=$(jq '[.files[]?.mutants[]?] | length' "$report")
+          tested=$(jq '[.files[]?.mutants[]? | select(.status != "CompileError" and .status != "Ignored")] | length' "$report")
+          echo "Mutants in the report: $total; testable (a status other than CompileError/Ignored): $tested"
+          if [ "$tested" -eq 0 ]; then
+            echo "::error::ZERO testable mutants. This PR changed Core, Stryker exited 0, and every mutant it generated ($total) was CompileError or Ignored — so the 100% this check would otherwise report is a score over nothing (Stryker logs 'unable to calculate a mutation score' for this and still exits 0). Make the mutants compile — a constant-folded argument that Stryker rewrites into a ternary is the known cause (docs/mutation-testing.md § 'Known limitation') — or, if the change genuinely has nothing to mutate, say so on the PR so a reviewer can agree."
+            exit 1
+          fi
+
       # On a survivor, turn Stryker's "exit code 2" into an instant, clear answer ON the PR: an inline
       # annotation on each surviving line (red in the "Files changed" diff) + a plain-English job summary
       # naming the fix. Runs only when the mutation step actually failed; best-effort, never rescues the

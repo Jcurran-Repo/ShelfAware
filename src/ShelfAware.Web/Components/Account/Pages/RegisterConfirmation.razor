@@ -1,5 +1,7 @@
 @page "/Account/RegisterConfirmation"
 @attribute [AllowAnonymous]
+@using Microsoft.Extensions.Options
+@inject IOptions<EmailOptions> Email
 
 <PageTitle>Set your password — Reginald</PageTitle>
 
@@ -10,5 +12,13 @@
     account, then sign in. (If it doesn't arrive in a minute, check your spam folder.)
 </p>
 
-<p class="muted auth-alt"><a href="Account/ForgotPassword">Didn't get it? Get a fresh link</a></p>
+<p class="muted auth-alt">
+    <a href="Account/ForgotPassword">Didn't get it? Get a fresh link</a>
+    @if (Email.Value.CooldownPhrase() is { } cooldown)
+    {
+        @* The same reading ForgotPassword's status uses — the queue silently drops a repeat inside it. *@
+        <span class="muted small">— only one link is sent per @cooldown, so asking again sooner sends
+        nothing.</span>
+    }
+</p>
 <p class="muted auth-alt"><a href="Account/Login">← Back to sign in</a></p>

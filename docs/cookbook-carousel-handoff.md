@@ -1,5 +1,9 @@
 # Cookbook carousel → subtle-peek drag/swipe (handoff)
 
+**Status:** ✅ IMPLEMENTED — this is the historical handoff. `wwwroot/js/cookbook-carousel.js` ships
+and `Cookbook.razor` uses it; the "NOT yet pushed" below describes the branch as it stood when this
+was written, not now.
+
 **Goal:** replace the cookbook's Prev/Next button carousel with a **drag/swipe** carousel whose
 **neighbouring recipes peek subtly in the background**, while keeping the accessibility the current
 design has. No new front end — this is the existing Blazor Server page (`Cookbook.razor` + `app.css` +

@@ -19,6 +19,19 @@ public class AiPricingTests
         Assert.Equal(6_000_000, AiPricing.CostMicros(Defaults, "claude-haiku-4-5", 1_000_000, 1_000_000));
     }
 
+    // The current catalog the Settings picker offers, each at its own row rather than the fallback tier
+    // ($5/$25, i.e. 30,000,000 micros for a million of each) — a missing row overstated a BYOK call by up
+    // to fifty times on /admin. A million tokens each way is the rate pair summed, in micros.
+    [Theory]
+    [InlineData("claude-haiku-5-5", 600_000)]       // $0.10 + $0.50
+    [InlineData("claude-sonnet-5", 12_000_000)]     // $2 + $10
+    [InlineData("claude-sonnet-5-5", 12_000_000)]   // $2 + $10
+    [InlineData("claude-opus-5-5", 24_000_000)]     // $4 + $20
+    public void The_current_catalog_is_priced_at_its_own_rate(string model, long micros) =>
+        // A fresh options object, not the shared static: one built once per class run would hold whichever
+        // rate table existed when it was first touched.
+        Assert.Equal(micros, AiPricing.CostMicros(new BillingOptions(), model, 1_000_000, 1_000_000));
+
     [Fact]
     public void The_dated_and_undated_haiku_ids_price_the_same()
     {

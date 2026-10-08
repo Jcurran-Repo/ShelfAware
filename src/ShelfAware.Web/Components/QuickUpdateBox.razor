@@ -8,10 +8,12 @@
 @inject NavigationManager Nav
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
-@inject IDemoValve DemoValve
+@inject IManagedCallCaps DemoValve
+@inject ShelfAware.Core.Speech.IVoiceCredentials Voice
 
 <form @onsubmit="SendChat" @formname="@FormName">
     <input @bind="chatInput" @bind:event="oninput" placeholder="@Placeholder"
+           maxlength="@ShelfAware.Core.PromptInput.ChatMaxLength"
            aria-label="@AriaLabel" disabled="@chatBusy" />
     @* Disabled on busy ONLY — not on an empty box. The browser's implicit form submission
        (Enter in the input) no-ops when the default submit button is disabled, and the
@@ -27,8 +29,13 @@
         <p class="@(chatError ? "error" : "chat-reply")">@chatReply</p>
     }
 </div>
-<div class="voice-divider"><span>or hold to talk</span></div>
-<PushToTalk OnApplied="OnApplied" />
+@* The voice strip asks the ONE "can this box hear?" definition (IVoiceCredentials.Ear) the mic controls
+   themselves ask, so a deaf box shows no divider over an empty slot. *@
+@if (ShelfAware.Core.Speech.VoiceEar.CanHear(Voice.Ear))
+{
+    <div class="voice-divider"><span>or hold to talk</span></div>
+    <PushToTalk OnApplied="OnApplied" />
+}
 
 @code {
     /// <summary>Distinguishes this form from any other on the page (Blazor's form-name requirement).</summary>
@@ -57,6 +64,14 @@
             // SOMETHING, or an active-looking button does nothing in silence.
             chatReply = BlankHint;
             chatError = false;
+            return;
+        }
+        // The server-side half of the input cap (the maxlength attribute is a courtesy a devtools edit
+        // removes): refused HERE, before the pre-check and before any charged call, with the cap named.
+        if (ShelfAware.Core.PromptInput.IsOverLength(chatInput, ShelfAware.Core.PromptInput.ChatMaxLength))
+        {
+            chatReply = ShelfAware.Core.PromptInput.TooLongMessage(ShelfAware.Core.PromptInput.ChatMaxLength);
+            chatError = true;
             return;
         }
         chatBusy = true;

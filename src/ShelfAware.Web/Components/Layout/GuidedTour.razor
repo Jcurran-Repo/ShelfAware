@@ -14,6 +14,7 @@
 @inject IJSRuntime JS
 @inject TourCoordinator Coordinator
 @inject CircuitAiSettings AiSettings
+@inject ShelfAware.Core.Speech.IVoiceCredentials Voice
 @inject ILogger<GuidedTour> Logger
 
 @if (active)
@@ -39,8 +40,8 @@
            managed deployment to bring their own key names a panel they cannot see and a step they
            cannot take. Managed is fixed at construction from server config, so it is stable to read
            at any point in the circuit's life. *@
-        <h2 class="tour-title" tabindex="-1" @ref="heading" aria-describedby="tour-progress">@Step.TitleFor(AiSettings.Managed)</h2>
-        <p class="tour-body">@Step.BodyFor(AiSettings.Managed)</p>
+        <h2 class="tour-title" tabindex="-1" @ref="heading" aria-describedby="tour-progress">@Step.TitleFor(AiSettings.Managed, CanHear)</h2>
+        <p class="tour-body">@Step.BodyFor(AiSettings.Managed, CanHear)</p>
 
         <div class="tour-actions">
             <button type="button" class="secondary" @onclick="BackAsync" disabled="@TourScript.IsFirst(index)">Back</button>
@@ -58,6 +59,10 @@
 }
 
 @code {
+    /// <summary>The ONE "can this box hear?" reading (IVoiceCredentials.Ear) the mic controls ask, so a
+    /// step never promises an assistant the page beside it doesn't render.</summary>
+    private bool CanHear => ShelfAware.Core.Speech.VoiceEar.CanHear(Voice.Ear);
+
     private bool active;
     private int index;
     private ElementReference heading;
