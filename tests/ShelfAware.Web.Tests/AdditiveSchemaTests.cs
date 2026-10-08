@@ -174,6 +174,25 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Creates_the_JournalEntries_table_on_a_pre_journal_db_with_the_fresh_schema()
+    {
+        await using var db = _db.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "JournalEntries");
+        Assert.NotEmpty(fresh);
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE JournalEntries;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // second boot — a no-op, not a table-exists error
+
+        // Same DDL and the same (household, member, day) index as a fresh file.
+        Assert.Equal(fresh, await TableSchemaAsync(db, "JournalEntries"));
+
+        db.JournalEntries.Add(new JournalEntry { Food = "Toast", EatenOn = new DateOnly(2026, 10, 8), Slot = MealSlot.Breakfast });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.JournalEntries.ToListAsync());
+    }
+
+    [Fact]
     public async Task Creates_the_SavedReports_table_on_an_older_db_with_the_fresh_schema()
     {
         await using var db = _db.CreateDbContext();

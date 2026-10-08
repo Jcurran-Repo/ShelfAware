@@ -7,16 +7,11 @@
 @using ShelfAware.Web.Undo
 @inject IHouseholdDbFactory DbFactory
 @inject IAppSettings SettingsStore
-@inject IPantryChat Chat
 @inject IPantryStore Store
 @inject ActivityLogService ActivityLog
-@inject NavigationManager Nav
 @inject VoiceCoordinator Coordinator
 @inject IJSRuntime JS
 @inject ILogger<Home> Logger
-@inject IEntitlements Entitlements
-@inject CircuitAiSettings AiSettings
-@inject IManagedCallCaps DemoValve
 @inject ShelfAware.Core.Speech.IVoiceCredentials Voice
 
 <PageTitle>Reginald</PageTitle>
@@ -202,31 +197,15 @@ else
 
     <section class="panel quick-update">
         <h2>Quick update</h2>
-        <form @onsubmit="SendChat" @formname="quick-update">
-            <input @bind="chatInput" @bind:event="oninput" placeholder="e.g. we're out of dog food, almost out of coffee"
-                   maxlength="@ShelfAware.Core.PromptInput.ChatMaxLength"
-                   aria-label="Quick update — say what you bought or ran low on" disabled="@chatBusy" />
-            @* Disabled on busy ONLY — not on an empty box. The browser's implicit form submission
-               (Enter in the input) no-ops when the default submit button is disabled, and the
-               enable-on-first-keystroke round-trips the circuit, so a fast "type, Enter" lost the
-               race and silently did nothing. SendChat already refuses a blank input. *@
-            <button type="submit" disabled="@chatBusy">
-                @(chatBusy ? "Working…" : "Send")
-            </button>
-        </form>
-        <div role="status" aria-live="polite">
-            @if (chatReply is not null)
-            {
-                <p class="@(chatError ? "error" : "chat-reply")">@chatReply</p>
-            }
-        </div>
-        @* The whole voice strip asks the ONE "can this box hear?" definition (IVoiceCredentials.Ear) the mic
-           controls themselves ask, so a deaf box shows neither a divider over an empty slot nor a sentence
-           pointing at an assistant that isn't in the corner. *@
+        <QuickUpdateBox FormName="quick-update"
+                        Placeholder="e.g. we're out of dog food, almost out of coffee"
+                        AriaLabel="Quick update — say what you bought or ran low on"
+                        BlankHint="@QuickUpdateBlankHint"
+                        OnApplied="LoadAsync" />
+        @* Asks the same "can this box hear?" definition the box's own voice strip asks: on a deaf box there
+           is no Assistant in the corner to point at. *@
         @if (ShelfAware.Core.Speech.VoiceEar.CanHear(Voice.Ear))
         {
-            <div class="voice-divider"><span>or hold to talk</span></div>
-            <PushToTalk OnApplied="LoadAsync" />
             <p class="muted small quick-update-hint">For a back-and-forth that keeps listening as you move around, use the 🎙 Assistant in the corner.</p>
         }
     </section>
@@ -273,10 +252,7 @@ else
 
     private DateOnly today;
 
-    private string chatInput = "";
-    private string? chatReply;
-    private bool chatError;
-    private bool chatBusy;
+    private const string QuickUpdateBlankHint = "Say what you bought or ran low on first — e.g. \"we're out of coffee\".";
 
     private int overdueCount => runningLow.Count(p => predictions[p.Id].Status == PredictionStatus.Overdue);
     private int dueSoonCount => runningLow.Count(p => predictions[p.Id].Status == PredictionStatus.DueSoon);
@@ -464,57 +440,6 @@ else
         try { await heading.FocusAsync(); }
         catch (JSDisconnectedException) { return; } // circuit gone — there is no DOM left to focus
         catch (JSException ex) { Logger.LogDebug(ex, "Couldn't focus the dashboard heading after a dismissal."); }
-    }
-
-    private async Task SendChat()
-    {
-        if (chatBusy) return;
-        if (string.IsNullOrWhiteSpace(chatInput))
-        {
-            // The button stays enabled on a blank box so the browser's implicit Enter-submission
-            // works (it no-ops on a disabled default button) — so a blank send must answer with
-            // SOMETHING, or an active-looking button does nothing in silence.
-            chatReply = "Say what you bought or ran low on first — e.g. \"we're out of coffee\".";
-            chatError = false;
-            return;
-        }
-        // The server-side half of the input cap (the maxlength attribute is a courtesy a devtools edit
-        // removes): refused HERE, before the pre-check and before any charged call, with the cap named.
-        if (ShelfAware.Core.PromptInput.IsOverLength(chatInput, ShelfAware.Core.PromptInput.ChatMaxLength))
-        {
-            chatReply = ShelfAware.Core.PromptInput.TooLongMessage(ShelfAware.Core.PromptInput.ChatMaxLength);
-            chatError = true;
-            return;
-        }
-        chatBusy = true;
-        chatReply = null;
-        // Phase 4c: don't attempt a call this circuit can't make — show why (out of credits / no key) and stop.
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.ChatTurn);
-        if (blocked is not null)
-        {
-            chatReply = blocked;
-            chatError = true;
-            chatBusy = false;
-            return;
-        }
-        try
-        {
-            var result = await Chat.HandleAsync(chatInput);
-            chatReply = result.Reply;
-            chatError = !result.Success;
-            if (result.Success)
-            {
-                chatInput = "";
-                await LoadAsync(); // reflect new signals/purchases in the lists
-                // A navigation tool ran ("show me the grocery list", "read me the ribs recipe") —
-                // the reply stays visible for a beat via the aria-live region, then the page changes.
-                if (result.NavigateTo is { } url) Nav.NavigateTo(url);
-            }
-        }
-        finally
-        {
-            chatBusy = false;
-        }
     }
 
     private (int ProductId, string Text)? copyNote; // one note at a time, tied to the card it is about

@@ -29,7 +29,12 @@ internal sealed class TestDb : IDbContextFactory<ShelfAwareDbContext>, IHousehol
     /// call-site changes; isolation tests re-point it to simulate a second household.</summary>
     public string? HouseholdId { get; set; } = "hh-test";
 
-    public ShelfAwareDbContext CreateDbContext() => new(_options) { HouseholdId = HouseholdId };
+    /// <summary>The PERSON every context is scoped to inside that household — only the per-member tables
+    /// (the meal journal) read it. One default member so a suite needs no setup; the isolation tests
+    /// re-point it (or null it) to play a second member, or a scope with nobody signed in.</summary>
+    public string? MemberId { get; set; } = "member-test";
+
+    public ShelfAwareDbContext CreateDbContext() => new(_options) { HouseholdId = HouseholdId, MemberId = MemberId };
 
     public Task<ShelfAwareDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(CreateDbContext());

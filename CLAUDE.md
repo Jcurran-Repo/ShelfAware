@@ -137,9 +137,9 @@ applies to any count in any doc — see `docs/remediation-plan.md` §6 on artifa
 
 The app is far beyond the spec's three pages. Current surfaces: Dashboard (`/`), Upload (`/receipt`),
 Products, Grocery List, Trends (`/trends`, `SpendInsight.razor`), Product Detail, Accuracy, Recipes,
-Receipts, Count from a photo (`/pantry-photo`), Cookbook, History, Reports, Meal plan, Settings, Demo,
-Bugs, and Admin. Outside the auth wall: `/about`, `/demo`, `/privacy`, `/Error`, `/not-found`, the
-`/Account/*` sign-in pages, and `/healthz`.
+Receipts, Count from a photo (`/pantry-photo`), Cookbook, History, Reports, Meal plan, Meal journal
+(`/journal`), Settings, Demo, Bugs, and Admin. Outside the auth wall: `/about`, `/demo`, `/privacy`,
+`/Error`, `/not-found`, the `/Account/*` sign-in pages, and `/healthz`.
 
 ## Where to look
 
@@ -149,6 +149,7 @@ Bugs, and Admin. Outside the auth wall: `/about`, `/demo`, `/privacy`, `/Error`,
 | Your first build; a shell, path or deploy oddity | `docs/environment.md` |
 | Anything that speaks or listens | `docs/features/voice.md`; choosing a voice, `docs/voice-bakeoff.md` |
 | Recipes, tags, substitutes, the cookbook | `docs/features/recipes.md` |
+| The meal journal, or anything per-person (`IMemberOwned`) | `docs/features/journal.md` |
 | Billing, credits, tiers, the payment seam | `docs/subscription-plan.md` |
 | The audit findings and the plan to close them | `docs/remediation-plan.md` |
 | What's still open and what's parked | `docs/backlog.md` |

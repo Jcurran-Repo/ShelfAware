@@ -383,7 +383,7 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         // followed by its adapted variants, also newest first) — so a positional reference the chat
         // resolves ("read the second recipe") lands on the recipe the user would count to on screen.
         var all = await db.Recipes
-            .Select(r => new { r.Id, r.Name, HasSteps = r.Steps.Count > 0, r.SavedAt, r.ParentRecipeId })
+            .Select(r => new { r.Id, r.Name, HasSteps = r.Steps.Count > 0, r.SavedAt, r.ParentRecipeId, r.EstimatedCaloriesPerServing })
             .ToListAsync(cancellationToken);
         return all
             .Where(r => r.ParentRecipeId is null)
@@ -392,7 +392,7 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
                 .Where(v => v.ParentRecipeId == o.Id)
                 .OrderByDescending(v => v.SavedAt)
                 .Prepend(o))
-            .Select(r => new RecipeRef(r.Id, r.Name, r.HasSteps))
+            .Select(r => new RecipeRef(r.Id, r.Name, r.HasSteps, r.EstimatedCaloriesPerServing))
             .ToList();
     }
 

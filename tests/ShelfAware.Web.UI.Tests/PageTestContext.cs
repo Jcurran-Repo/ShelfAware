@@ -122,6 +122,8 @@ public abstract class PageTestContext : BunitContext
         // The grocery list + dashboard read the current meal plan (GetCurrentPlanAsync); they never
         // generate, so a no-op generator suffices. A test needing generation registers its own over this.
         Services.AddSingleton(new MealPlanService(Factory, new FakeMealPlanGenerator(), AppSettings, NullLogger<MealPlanService>.Instance));
+        // The real journal service over the test DB — the per-member scope comes from TestDb.MemberId.
+        Services.AddSingleton(new MealJournalService(Factory));
         // Real (empty) IConfiguration so pages that read a deployment flag — e.g. Recipes' gate on
         // Voice:LiveAgentEnabled — resolve; an absent key is the feature's default-off state, which is what
         // a test should see. A test wanting a flag ON registers its own IConfiguration in

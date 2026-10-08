@@ -35,6 +35,8 @@
                 expiration labels, recipes, grocery list, meal plans, tags, settings — and the receipts you
                 upload, as line items <em>and</em> as the original images, so a read can be checked or
                 retried. A receipt that could not be read is kept too, for the same reason.</li>
+            <li><strong>Your meal journal:</strong> the foods you log, when, and their calories. This one is
+                yours alone, not the household's.</li>
             <li><strong>Bug reports you file,</strong> with the page snapshot you chose to include.</li>
             <li><strong>The About page's "notify me" list:</strong> the plan you clicked, when, and, only if you
                 typed one, your email address — no account needed, and nothing else about you.</li>
@@ -69,7 +71,8 @@
         <ul>
             <li>reading a receipt sends the receipt image and the names of products you already have;</li>
             <li>counting a shelf sends the shelf photos and your product names (the photos are not kept);</li>
-            <li>the assistant sends what you typed or said, with your product list and tags for context;</li>
+            <li>the assistant sends what you typed or said, with your product list and tags for context, and,
+                when you ask what you've eaten, the matching part of your meal journal;</li>
             <li>recipe ideas, imports and meal plans send the recipe text or photo and what's on hand.</li>
         </ul>
         <p>
@@ -88,8 +91,9 @@
     <section class="about-story">
         <h2>Who can see what</h2>
         <ul>
-            <li><strong>Your household</strong> shares one pantry: everyone you invite sees everything in it,
-                and anyone in it can remove any member or delete all its data. Only share an invite code with
+            <li><strong>Your household</strong> shares one pantry: everyone you invite sees everything in it
+                except your meal journal, which only you can see, and anyone in it can remove any member or
+                delete all its pantry data. Only share an invite code with
                 people you'd share the kitchen with.</li>
             <li><strong>Other households</strong> cannot see yours. Every table is filtered by household on
                 read and refused on write.</li>
@@ -122,12 +126,14 @@
         <h2>Taking it back</h2>
         <ul>
             <li><strong>Export:</strong> Settings → Your data → <em>Download my data</em> gives you every
-                pantry record as JSON plus your receipt images, in a zip.</li>
+                pantry record and your own meal journal as JSON, plus your receipt images, in a zip.</li>
             <li><strong>Delete:</strong> Settings → <em>Delete all my data</em> removes the household's pantry,
-                bug reports and settings in one transaction, then its receipt images, cached audio and recipe
+                bug reports and settings, and your own meal journal, in one transaction, then its receipt images, cached audio and recipe
                 images from disk and its API tokens.</li>
             <li><strong>What delete does not reach:</strong> your sign-in itself, the household record, the
-                operator's usage and credit records, and an email left on the "notify me" list. There is no self-service account deletion yet — ask
+                operator's usage and credit records, an email left on the "notify me" list, and another
+                member's meal journal, which only they can delete. If you are removed from a household, your
+                journal stays in its database, hidden from everyone, until you rejoin or the operator removes it. There is no self-service account deletion yet — ask
                 whoever runs this server to remove the account@(Email.Value.IsConfigured ? ", by replying to any email it has sent you" : "").</li>
         </ul>
     </section>

@@ -65,4 +65,15 @@ public class PrivacyPageTests : PageTestContext
         Assert.Contains("no self-service account deletion yet", text);
         Assert.Contains("Receipt images are not aged out", text);
     }
+
+    [Fact]
+    public void It_says_the_meal_journal_is_the_one_thing_a_household_does_not_share()
+    {
+        var text = Render<Privacy>().Markup;
+
+        // The journal is per-person (IMemberOwned): the "everyone sees everything" line would be false
+        // without its exception, and delete acting on the caller's journal only is a limit worth stating.
+        Assert.Contains("except your meal journal, which only you can see", text);
+        Assert.Contains("member's meal journal, which only they can delete", text);
+    }
 }

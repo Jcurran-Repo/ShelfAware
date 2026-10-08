@@ -1,0 +1,107 @@
+@* The typed half of "tell Reginald": a one-line box over IPantryChat, plus the push-to-talk button beside it —
+   the SAME brain both ways. Lifted out of the dashboard when the meal journal page needed the same box, so the
+   Enter-submits fix, the can't-call-AI check and the navigate-after-reply step live once rather than being
+   copied onto a second page to drift. The page around it owns the heading and its own hint text. *@
+@using ShelfAware.Core.Billing
+@using ShelfAware.Core.Chat
+@inject IPantryChat Chat
+@inject NavigationManager Nav
+@inject IEntitlements Entitlements
+@inject CircuitAiSettings AiSettings
+@inject IManagedCallCaps DemoValve
+@inject ShelfAware.Core.Speech.IVoiceCredentials Voice
+
+<form @onsubmit="SendChat" @formname="@FormName">
+    <input @bind="chatInput" @bind:event="oninput" placeholder="@Placeholder"
+           maxlength="@ShelfAware.Core.PromptInput.ChatMaxLength"
+           aria-label="@AriaLabel" disabled="@chatBusy" />
+    @* Disabled on busy ONLY — not on an empty box. The browser's implicit form submission
+       (Enter in the input) no-ops when the default submit button is disabled, and the
+       enable-on-first-keystroke round-trips the circuit, so a fast "type, Enter" lost the
+       race and silently did nothing. SendChat already refuses a blank input. *@
+    <button type="submit" disabled="@chatBusy">
+        @(chatBusy ? "Working…" : "Send")
+    </button>
+</form>
+<div role="status" aria-live="polite">
+    @if (chatReply is not null)
+    {
+        <p class="@(chatError ? "error" : "chat-reply")">@chatReply</p>
+    }
+</div>
+@* The voice strip asks the ONE "can this box hear?" definition (IVoiceCredentials.Ear) the mic controls
+   themselves ask, so a deaf box shows no divider over an empty slot. *@
+@if (ShelfAware.Core.Speech.VoiceEar.CanHear(Voice.Ear))
+{
+    <div class="voice-divider"><span>or hold to talk</span></div>
+    <PushToTalk OnApplied="OnApplied" />
+}
+
+@code {
+    /// <summary>Distinguishes this form from any other on the page (Blazor's form-name requirement).</summary>
+    [Parameter, EditorRequired] public string FormName { get; set; } = "";
+    [Parameter, EditorRequired] public string Placeholder { get; set; } = "";
+    [Parameter, EditorRequired] public string AriaLabel { get; set; } = "";
+
+    /// <summary>What a blank send answers with — guidance in the page's own words, never an error.</summary>
+    [Parameter, EditorRequired] public string BlankHint { get; set; } = "";
+
+    /// <summary>Raised after a successful turn (typed or spoken), so the page reloads what it shows.</summary>
+    [Parameter] public EventCallback OnApplied { get; set; }
+
+    private string chatInput = "";
+    private string? chatReply;
+    private bool chatError;
+    private bool chatBusy;
+
+    private async Task SendChat()
+    {
+        if (chatBusy) return;
+        if (string.IsNullOrWhiteSpace(chatInput))
+        {
+            // The button stays enabled on a blank box so the browser's implicit Enter-submission
+            // works (it no-ops on a disabled default button) — so a blank send must answer with
+            // SOMETHING, or an active-looking button does nothing in silence.
+            chatReply = BlankHint;
+            chatError = false;
+            return;
+        }
+        // The server-side half of the input cap (the maxlength attribute is a courtesy a devtools edit
+        // removes): refused HERE, before the pre-check and before any charged call, with the cap named.
+        if (ShelfAware.Core.PromptInput.IsOverLength(chatInput, ShelfAware.Core.PromptInput.ChatMaxLength))
+        {
+            chatReply = ShelfAware.Core.PromptInput.TooLongMessage(ShelfAware.Core.PromptInput.ChatMaxLength);
+            chatError = true;
+            return;
+        }
+        chatBusy = true;
+        chatReply = null;
+        // Phase 4c: don't attempt a call this circuit can't make — show why (out of credits / no key) and stop.
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.ChatTurn);
+        if (blocked is not null)
+        {
+            chatReply = blocked;
+            chatError = true;
+            chatBusy = false;
+            return;
+        }
+        try
+        {
+            var result = await Chat.HandleAsync(chatInput);
+            chatReply = result.Reply;
+            chatError = !result.Success;
+            if (result.Success)
+            {
+                chatInput = "";
+                await OnApplied.InvokeAsync(); // reflect what the turn changed in the page's lists
+                // A navigation tool ran ("show me the grocery list", "read me the ribs recipe") —
+                // the reply stays visible for a beat via the aria-live region, then the page changes.
+                if (result.NavigateTo is { } url) Nav.NavigateTo(url);
+            }
+        }
+        finally
+        {
+            chatBusy = false;
+        }
+    }
+}

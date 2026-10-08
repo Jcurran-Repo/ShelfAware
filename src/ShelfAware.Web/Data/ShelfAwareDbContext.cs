@@ -12,6 +12,12 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     /// inserts are left alone — never a way to read another household's data.</summary>
     public string? HouseholdId { get; set; }
 
+    /// <summary>The PERSON this context acts for, inside <see cref="HouseholdId"/> — the Identity user id of
+    /// whoever is signed in. Only <see cref="IMemberOwned"/> tables (the meal journal) read it: they filter on
+    /// household AND member and stamp both on insert. Null = no person known (background work, an API
+    /// token): those tables then read nothing and refuse inserts, rather than guess whose journal it is.</summary>
+    public string? MemberId { get; set; }
+
     public DbSet<Product> Products => Set<Product>();
     public DbSet<PurchaseEvent> PurchaseEvents => Set<PurchaseEvent>();
     public DbSet<Receipt> Receipts => Set<Receipt>();
@@ -36,6 +42,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<PlannedMeal> PlannedMeals => Set<PlannedMeal>();
     public DbSet<LookalikePair> LookalikePairs => Set<LookalikePair>();
     public DbSet<LookalikeCluster> LookalikeClusters => Set<LookalikeCluster>();
+    public DbSet<JournalEntry> JournalEntries => Set<JournalEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -75,6 +82,8 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         ApplyHousehold<PlannedMeal>(modelBuilder);
         ApplyHousehold<LookalikePair>(modelBuilder);
         ApplyHousehold<LookalikeCluster>(modelBuilder);
+        // Per-PERSON, not per-household: one member's journal is invisible to the other's screen.
+        ApplyMember<JournalEntry>(modelBuilder);
 
         // One usage row per household per day (the upsert's race-safety anchor).
         modelBuilder.Entity<AiUsage>()
@@ -113,6 +122,10 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         modelBuilder.Entity<MealEvent>()
             .HasIndex(m => new { m.RecipeId, m.AteAt });
 
+        // The journal is read by person and date range (a month, plus the days squaring off its weeks).
+        modelBuilder.Entity<JournalEntry>()
+            .HasIndex(j => new { j.HouseholdId, j.MemberId, j.EatenOn });
+
         // A meal plan's slots are read by plan and date (the calendar's ordering).
         modelBuilder.Entity<PlannedMeal>()
             .HasIndex(m => new { m.MealPlanId, m.Date });
@@ -123,6 +136,12 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         modelBuilder.Entity<TEntity>().HasQueryFilter(e => e.HouseholdId == HouseholdId);
         modelBuilder.Entity<TEntity>().HasIndex(e => e.HouseholdId);
     }
+
+    /// <summary>The household filter, narrowed to one person. Replaces <see cref="ApplyHousehold{TEntity}"/>
+    /// for these tables rather than adding to it — an entity has one query filter, and this one already
+    /// contains the household's condition. The index is the composite one declared with the entity.</summary>
+    private void ApplyMember<TEntity>(ModelBuilder modelBuilder) where TEntity : class, IMemberOwned =>
+        modelBuilder.Entity<TEntity>().HasQueryFilter(e => e.HouseholdId == HouseholdId && e.MemberId == MemberId);
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
@@ -164,7 +183,29 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
                     if (entry.Entity.HouseholdId != HouseholdId) throw WrongHousehold(entry);
                     break;
             }
+            if (entry.Entity is IMemberOwned owned) EnforceMember(entry, owned);
         }
+    }
+
+    /// <summary>The same stamp-and-refuse, one level down, for rows that belong to a person. A household
+    /// context with no member cannot write one at all: stamping it with nobody would make a row no one can
+    /// read, and guessing a member would put it in someone else's journal.</summary>
+    private void EnforceMember(EntityEntry<IHouseholdOwned> entry, IMemberOwned owned)
+    {
+        if (entry.State is not (EntityState.Added or EntityState.Modified or EntityState.Deleted)) return;
+        if (MemberId is null)
+            throw new InvalidOperationException(
+                $"Refusing to {entry.State.ToString().ToLowerInvariant()} a {owned.GetType().Name} from a context " +
+                "that knows no member — a per-person row needs a signed-in person to belong to.");
+        if (entry.State == EntityState.Added && owned.MemberId.Length == 0)
+        {
+            owned.MemberId = MemberId;
+            return;
+        }
+        if (owned.MemberId != MemberId)
+            throw new InvalidOperationException(
+                $"Refusing to {entry.State.ToString().ToLowerInvariant()} a {owned.GetType().Name} that belongs to " +
+                "another member of this household. Per-person rows are written only by the person they belong to.");
     }
 
     private InvalidOperationException WrongHousehold(EntityEntry<IHouseholdOwned> entry) =>
