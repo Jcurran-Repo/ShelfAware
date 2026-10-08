@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using Anthropic.Models.Messages;
@@ -6,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Journal;
 using ShelfAware.Core.Prediction;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
@@ -27,6 +29,11 @@ public class AnthropicPantryChat : IPantryChat
     /// <summary>The one tool whose only consumer is the hands-free reader, named once so the gate that
     /// withholds it and the declaration that defines it cannot drift apart.</summary>
     private const string GoToStep = "go_to_step";
+
+    /// <summary>The meal journal's two tools, named once so the gate that withholds them when no journal is
+    /// wired and the declarations that define them cannot drift apart (the <see cref="GoToStep"/> lesson).</summary>
+    private const string LogMeal = "log_meal";
+    private const string QueryJournal = "query_journal";
     private static readonly string SystemPrompt = ReadEmbedded("Prompts.pantry-chat-system.txt");
 
     private readonly IChatClient _chat;
@@ -36,12 +43,14 @@ public class AnthropicPantryChat : IPantryChat
     private readonly IRecipeAdapter? _recipeAdapter;
     private readonly IRecipeAdvisor? _recipeAdvisor;
     private readonly IAppSettings? _settings;
+    private readonly IMealJournal? _journal;
     private readonly ILogger<AnthropicPantryChat> _logger;
 
     public AnthropicPantryChat(
         IChatClient chat, IOptions<LlmOptions> options, IPantryStore store, ILogger<AnthropicPantryChat> logger,
         IProductSubstituteAdvisor? substituteAdvisor = null,
-        IRecipeAdapter? recipeAdapter = null, IRecipeAdvisor? recipeAdvisor = null, IAppSettings? settings = null)
+        IRecipeAdapter? recipeAdapter = null, IRecipeAdvisor? recipeAdvisor = null, IAppSettings? settings = null,
+        IMealJournal? journal = null)
     {
         _chat = chat;
         _options = options.Value;
@@ -50,6 +59,7 @@ public class AnthropicPantryChat : IPantryChat
         _recipeAdapter = recipeAdapter;
         _recipeAdvisor = recipeAdvisor;
         _settings = settings;
+        _journal = journal;
         _logger = logger;
     }
 
@@ -72,6 +82,10 @@ public class AnthropicPantryChat : IPantryChat
         if (knownTags.Count > 0)
             system += "\n\nKnown tags (reuse one of these when tagging; coin a new tag only when none fits):\n"
                 + string.Join(", ", knownTags);
+        // The clock, for the journal only: "I just had a sandwich" with no meal named is lunch at 12:40
+        // and a snack at 15:30, and a date alone can't tell those apart.
+        if (_journal is not null)
+            system += $"\n\nThe time now is {DateTime.Now.ToString("h:mm tt", CultureInfo.InvariantCulture)}.";
         // What the user is looking at right now, so on-screen references ("the second one") resolve.
         if (!string.IsNullOrWhiteSpace(screenContext))
             system += "\n\nOn screen right now:\n" + screenContext.Trim();
@@ -80,7 +94,7 @@ public class AnthropicPantryChat : IPantryChat
         {
             ModelId = _options.ChatModel,
             MaxOutputTokens = 1024,
-            Tools = BuildTools(cookAlong),
+            Tools = BuildTools(cookAlong, journal: _journal is not null),
         };
         // Replay prior (user, assistant) exchanges so follow-ups resolve against what was just said,
         // then append the new user turn. Empty history = the original single-turn behaviour.
@@ -647,6 +661,7 @@ public class AnthropicPantryChat : IPantryChat
                     "products" => "/products",
                     "accuracy" => "/accuracy",
                     "settings" => "/settings",
+                    "journal" => "/journal",
                     _ => null,
                 };
                 if (url is null) return ($"Unknown page '{page}'.", true);
@@ -728,6 +743,66 @@ public class AnthropicPantryChat : IPantryChat
                 return (adaptResult.Message, !adaptResult.Success);
             }
 
+            case LogMeal:
+            {
+                // Only reachable when offered, and only offered with a journal — but a tool list is a
+                // promise, so the handler refuses rather than trusting the gate.
+                if (_journal is null) return ("The meal journal isn't set up.", true);
+                var food = Str("food")?.Trim();
+                if (string.IsNullOrWhiteSpace(food)) return ("Say what was eaten (food).", true);
+                if (!Enum.TryParse<MealSlot>(Str("meal"), ignoreCase: true, out var slot) || !Enum.IsDefined(slot))
+                    return ("meal must be one of Breakfast, Lunch, Dinner, Snack.", true);
+                var eatenOn = DateOnly.FromDateTime(DateTime.Today);
+                if (Str("date") is { Length: > 0 } rawDate &&
+                    !DateOnly.TryParseExact(rawDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out eatenOn))
+                    return ($"Couldn't read \"{rawDate}\" as a date — pass it as YYYY-MM-DD.", true);
+
+                // A saved recipe is logged at ITS per-serving figure, not a fresh guess: the journal and the
+                // Reports tab's calories-cooked chart then price the same dish the same way.
+                int? calories = Int("calories");
+                var stated = Bool("calories_stated") == true;
+                var note = "";
+                if (Str("recipe_name") is { Length: > 0 } recipeName)
+                {
+                    var recipe = ResolveRecipe(recipeName, await _store.GetRecipesAsync(ct));
+                    if (recipe?.CaloriesPerServing is { } perServing)
+                    {
+                        var servings = Dec("servings") ?? 1m;
+                        if (servings <= 0 || servings > 20) return ("servings must be more than 0 and at most 20.", true);
+                        calories = (int)Math.Round(perServing * servings, MidpointRounding.AwayFromZero);
+                        stated = false;
+                        note = $" (from the saved {recipe.Name} recipe)";
+                    }
+                }
+
+                var write = await _journal.LogAsync(new JournalDraft(food, slot, eatenOn, calories, CaloriesEstimated: !stated), ct);
+                if (write.Entry is not { } entry) return (write.Problem!, true);
+                wrote.Mark();
+                actions.Add($"journal → {entry.Food}");
+                var kcal = MealJournal.Total([entry]).Kcal ?? "no calorie count";
+                return ($"Logged {entry.Food} for {entry.Slot.ToString().ToLowerInvariant()} on {entry.EatenOn:yyyy-MM-dd}: {kcal}{note}"
+                    + (entry.CaloriesEstimated ? " — an estimate, which they can correct on the Journal page." : "."), false);
+            }
+
+            case QueryJournal:
+            {
+                if (_journal is null) return ("The meal journal isn't set up.", true);
+                if (!Enum.TryParse<JournalPeriod>(Str("period"), ignoreCase: true, out var period) || !Enum.IsDefined(period))
+                    return ("period must be one of Day, Week, Month.", true);
+                var day = DateOnly.FromDateTime(DateTime.Today);
+                if (Str("date") is { Length: > 0 } rawDate &&
+                    !DateOnly.TryParseExact(rawDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out day))
+                    return ($"Couldn't read \"{rawDate}\" as a date — pass it as YYYY-MM-DD.", true);
+                var span = MealJournal.SpanOf(period, day);
+                var entries = await _journal.GetAsync(span, ct);
+                var answer = MealJournal.Describe(period, span, MealJournal.Total(entries));
+                // A day is small enough to say what was in it; a week or a month is a number.
+                if (period == JournalPeriod.Day)
+                    foreach (var meal in MealJournal.Meals(entries))
+                        answer += $" {meal.Slot}: {string.Join(", ", meal.Items.Select(i => i.Food))} ({meal.Total.Kcal ?? "no calorie count"}).";
+                return (answer, false);
+            }
+
             default:
                 return ($"Unknown tool: {call.Name}.", true);
         }
@@ -761,7 +836,7 @@ public class AnthropicPantryChat : IPantryChat
             "won't take effect yet — tell the user it'll register if they say so again once that stock date has passed.";
     }
 
-    private static IList<AITool> BuildTools(CookAlongState? cookAlong)
+    private static IList<AITool> BuildTools(CookAlongState? cookAlong, bool journal)
     {
         const string categoryEnum = """["Dairy","Meat","Produce","Pantry","Frozen","Beverage","Household","PetCare","PersonalCare","Other"]""";
 
@@ -857,7 +932,7 @@ public class AnthropicPantryChat : IPantryChat
                 "Navigate the user's screen to a page of the app. Use when they ask to see, open, go to, or show a page. For a specific product's detail page use page='product' + product_name. To show the recipes that use a specific product ('what can I make with the chicken', 'recipes using the salmon'), use page='recipes' + product_name. For reports ('show me what's costing more', 'the waste report', 'our monthly report'), use page='reports' + the matching report.",
                 """
                 {
-                  "page": { "type": "string", "enum": ["dashboard","grocery_list","recipes","trends","reports","upload","receipts","products","accuracy","settings","product"] },
+                  "page": { "type": "string", "enum": ["dashboard","grocery_list","recipes","trends","reports","upload","receipts","products","accuracy","settings","journal","product"] },
                   "product_name": { "type": "string", "description": "With page='product', the product whose detail page to open. With page='recipes', scope the recipes list to those that use this product. Omit for a whole page." },
                   "report": { "type": "string", "enum": ["report-card","price-watch","eat","waist","waste","gap","custom"], "description": "With page='reports': which report to open. report-card=monthly summary, price-watch=what's costing more, eat=meals cooked + cost per meal, waist=calories over time, waste=expired/worth-checking items, gap=out-before-rebuy gaps. Omit for the default." }
                 }
@@ -915,6 +990,31 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 """,
                 ["recipe"]),
+
+            MakeTool(LogMeal,
+                "Record ONE food the user says they ate in their personal meal journal. Call once per distinct food ('two eggs and toast for breakfast' = two calls). Eating is NOT an inventory statement: never record_signal, set_quantity or add_purchase because someone ate something.",
+                """
+                {
+                  "food": { "type": "string", "description": "What was eaten, with the portion as they said it (e.g. '2 scrambled eggs', 'turkey sandwich')." },
+                  "meal": { "type": "string", "enum": ["Breakfast","Lunch","Dinner","Snack"], "description": "The meal they name; if they don't name one, infer it from their words or the time now." },
+                  "calories": { "type": "integer", "description": "Calories for the portion eaten: the number they stated, or else your best estimate for that portion (assume one typical serving when no portion is given). Omit only if you genuinely cannot estimate." },
+                  "calories_stated": { "type": "boolean", "description": "true ONLY when the user said the calorie number themselves. Default false (an estimate)." },
+                  "date": { "type": "string", "description": "YYYY-MM-DD when they ate it, if not today ('yesterday', 'Tuesday'). Omit for today." },
+                  "recipe_name": { "type": "string", "description": "If the food is one of their SAVED recipes, its name — the recipe's own calorie figure is then used." },
+                  "servings": { "type": "number", "description": "With recipe_name: how many servings they ate. Default 1." }
+                }
+                """,
+                ["food", "meal"]),
+
+            MakeTool(QueryJournal,
+                "Read the user's meal journal back: what they ate and the calorie total for a day, the calendar week (Sunday to Saturday) or the calendar month. Use for 'how many calories have I had today / this week / this month', 'what did I eat yesterday'.",
+                """
+                {
+                  "period": { "type": "string", "enum": ["Day","Week","Month"] },
+                  "date": { "type": "string", "description": "YYYY-MM-DD of any day inside the period. Omit for the current one." }
+                }
+                """,
+                ["period"]),
         ];
 
         // ⚠️ A tool that cannot do anything is not offered. go_to_step moves the hands-free reader and
@@ -927,8 +1027,10 @@ public class AnthropicPantryChat : IPantryChat
         // this filter ran after the conversion and so matched nothing: go_to_step was still offered on
         // every surface, and the test asserting it was withheld passed vacuously. It was the test for the
         // OTHER side — that the tool IS offered when a reader is open — that failed and gave it away.
+        // The journal's tools follow the same rule: offered only when a journal is wired to carry them out.
         return tools
             .Where(t => cookAlong is not null || t.Name != GoToStep)
+            .Where(t => journal || t.Name is not (LogMeal or QueryJournal))
             .Select(t => ((ToolUnion)t).AsAITool())
             .ToList();
     }
