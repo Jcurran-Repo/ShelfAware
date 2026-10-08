@@ -33,8 +33,8 @@ public class TagPromptRankingTests
     public void The_limit_is_honoured_and_the_nearest_entry_is_kept_whatever_its_position()
     {
         // The nearest tag is LAST, where a plain Take would drop it; every filler is equally far from
-        // "soda" (no digit matches a letter), so the ones that give way are the last-listed fillers.
-        var fillers = Enumerable.Range(0, TagVocabulary.PromptVocabularyLimit + 10).Select(i => $"Filler {i:00}").ToList();
+        // "soda" (same length, and no digit matches a letter — hence three digits for all of them), so the ones that give way are the last-listed fillers.
+        var fillers = Enumerable.Range(0, TagVocabulary.PromptVocabularyLimit + 10).Select(i => $"Filler {i:000}").ToList();
         var existing = fillers.Append("Sodium").ToList();
 
         var sent = TagVocabulary.NearestForPrompt("Soda", existing);

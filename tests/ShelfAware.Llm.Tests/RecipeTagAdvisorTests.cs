@@ -67,7 +67,7 @@ public class RecipeTagAdvisorTests
         // size. The bound is by nearness to the recipe — "Pasta" is listed last, where a plain Take would
         // have dropped it, and ranks first because its spelling is an ingredient; what gives way is the
         // far end of the fillers.
-        var fillers = Enumerable.Range(0, TagVocabulary.PromptVocabularyLimit + 10).Select(i => $"Filler {i:00}");
+        var fillers = Enumerable.Range(0, TagVocabulary.PromptVocabularyLimit + 10).Select(i => $"Filler {i:000}");
         var known = fillers.Append("Pasta").ToList();
         var chat = FakeChatClient.Returning(Responses.Text("Dinner"));
 
@@ -78,7 +78,7 @@ public class RecipeTagAdvisorTests
         var listed = line[(line.IndexOf(':') + 1)..].TrimEnd('.').Split(',', StringSplitOptions.TrimEntries);
         Assert.Equal(TagVocabulary.PromptVocabularyLimit, listed.Length);
         Assert.Equal("Pasta", listed[0]);
-        Assert.DoesNotContain($"Filler {TagVocabulary.PromptVocabularyLimit + 9:00}", listed); // the last-listed filler
+        Assert.DoesNotContain($"Filler {TagVocabulary.PromptVocabularyLimit + 9:000}", listed); // the last-listed filler
     }
 
     [Fact]

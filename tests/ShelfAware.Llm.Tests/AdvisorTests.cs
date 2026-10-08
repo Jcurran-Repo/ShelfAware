@@ -190,7 +190,7 @@ public class TagAdvisorTests
         // ⚠️ Bounded by NEARNESS, not by position. The nearest tag is listed last, where a plain Take
         // would have dropped it; what gives way is the far end of the vocabulary. The whole list used to
         // ride into every charged call, N × 64 bytes, unbounded in N.
-        var fillers = Enumerable.Range(0, TagVocabulary.PromptVocabularyLimit + 10).Select(i => $"Filler {i:00}");
+        var fillers = Enumerable.Range(0, TagVocabulary.PromptVocabularyLimit + 10).Select(i => $"Filler {i:000}");
         var existing = fillers.Append("Sodium").ToList();
         var chat = FakeChatClient.Returning(Responses.Text("NONE"));
 
@@ -200,7 +200,7 @@ public class TagAdvisorTests
         var listed = prompt.Split('\n').Where(l => l.StartsWith("- ", StringComparison.Ordinal)).ToList();
         Assert.Equal(TagVocabulary.PromptVocabularyLimit, listed.Count);
         Assert.Contains("- Sodium", listed);
-        Assert.DoesNotContain($"- Filler {TagVocabulary.PromptVocabularyLimit + 9:00}", listed); // the last-listed filler
+        Assert.DoesNotContain($"- Filler {TagVocabulary.PromptVocabularyLimit + 9:000}", listed); // the last-listed filler
     }
 
     [Fact]
@@ -208,7 +208,7 @@ public class TagAdvisorTests
     {
         // The model was asked to name one of the tags in its prompt, so its answer resolves against that
         // list — and the spelling that comes back is the household's, however the model cased it.
-        var fillers = Enumerable.Range(0, TagVocabulary.PromptVocabularyLimit + 10).Select(i => $"Filler {i:00}");
+        var fillers = Enumerable.Range(0, TagVocabulary.PromptVocabularyLimit + 10).Select(i => $"Filler {i:000}");
         var existing = fillers.Append("Sodium").ToList();
 
         Assert.Equal("Sodium", await Advisor(FakeChatClient.Returning(Responses.Text("sodium")))
