@@ -14,7 +14,7 @@ public sealed class HouseholdDbFactoryTests : IDisposable
     [Fact]
     public async Task The_context_comes_back_scoped_to_the_resolved_household()
     {
-        var factory = new HouseholdDbFactory(_db, new FakeCurrentHousehold("hh-resolved"));
+        var factory = new HouseholdDbFactory(_db, new FakeCurrentHousehold("hh-resolved"), new FixedMember("member-1"));
 
         await using var db = await factory.CreateDbContextAsync();
 
@@ -24,7 +24,7 @@ public sealed class HouseholdDbFactoryTests : IDisposable
     [Fact]
     public async Task No_resolvable_household_refuses_rather_than_handing_out_an_unscoped_context()
     {
-        var factory = new HouseholdDbFactory(_db, new FakeCurrentHousehold(id: null));
+        var factory = new HouseholdDbFactory(_db, new FakeCurrentHousehold(id: null), new FixedMember("member-1"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => factory.CreateDbContextAsync());
     }
