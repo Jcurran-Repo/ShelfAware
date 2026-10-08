@@ -70,6 +70,8 @@ jobs:
         with:
           # Empty means the ref this workflow was dispatched on, which is what the dispatcher chose.
           ref: ${{ inputs.ref || github.ref }}
+          # Enough history for the CI gate to step back over the test-status snapshot commits (below).
+          fetch-depth: 50
 
       # The `ref` input is free-form, so it is never interpolated into a run: block; the one thing the
       # steps below need is the 40-hex sha the checkout resolved it to, and git is what says what that is.
@@ -84,6 +86,13 @@ jobs:
       # LATEST run of each name, so a re-run that went green counts and an older red one does not.
       # No run at all is a refusal too: CI runs on pull requests and on pushes to master, so a branch
       # with no PR has never been tested — open one, or wait for its check.
+      #
+      # ⚠️ The commit asked about is the one whose CODE was tested, which is not always $SHA. ci.yml and
+      # mutation.yml commit the test-status snapshot back to master with GITHUB_TOKEN, and a push made with
+      # that token starts no workflow — so the moment those pushes are allowed, master's head is a
+      # snapshot commit with no "Build & test" run of its own, and asking about it refused every deploy of
+      # master. A commit whose ONLY change is that one JSON file carries exactly its parent's code, so the
+      # gate steps back over such commits (single-parent, bounded) to the one CI actually built.
       - name: Require a green CI run on this commit
         if: ${{ !inputs.force }}
         env:
@@ -91,22 +100,33 @@ jobs:
           REPO: ${{ github.repository }}
           SHA: ${{ steps.resolve.outputs.sha }}
         run: |
+          snapshot=src/ShelfAware.Web/wwwroot/test-status.json
+          tested="$SHA"
+          for _ in $(seq 1 20); do
+            # A merge or a root commit is never stepped over: only a plain snapshot-only commit is.
+            [ "$(git rev-list --parents -n 1 "$tested" | wc -w)" -eq 2 ] || break
+            [ "$(git diff --name-only "$tested^" "$tested")" = "$snapshot" ] || break
+            tested=$(git rev-parse "$tested^")
+          done
+          if [ "$tested" != "$SHA" ]; then
+            echo "$SHA only refreshes $snapshot on top of $tested; checking CI on $tested."
+          fi
           # "none" when the commit has no such check run; "pending:<status>" while one is still running
           # (its conclusion is null until it finishes); otherwise the conclusion itself.
-          conclusion=$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=Build%20%26%20test&per_page=100" \
+          conclusion=$(gh api "repos/$REPO/commits/$tested/check-runs?check_name=Build%20%26%20test&per_page=100" \
             --jq '[.check_runs[] | select(.name == "Build & test")] | first
                   | if . == null then "none" else (.conclusion // ("pending:" + .status)) end')
           case "$conclusion" in
             success)
-              echo "CI is green on $SHA (Build & test: success)." ;;
+              echo "CI is green on $tested (Build & test: success)." ;;
             none|"")
-              echo "::error::No \"Build & test\" check run exists for $SHA — CI has not run on this commit (it runs on pull requests and on pushes to master). Open a PR for the branch or wait for its check; for an emergency, re-dispatch with force=true."
+              echo "::error::No \"Build & test\" check run exists for $tested — CI has not run on this commit (it runs on pull requests and on pushes to master). Open a PR for the branch or wait for its check; for an emergency, re-dispatch with force=true."
               exit 1 ;;
             pending:*)
-              echo "::error::\"Build & test\" on $SHA is still running (${conclusion#pending:}). Wait for it to go green, then re-dispatch; for an emergency, re-dispatch with force=true."
+              echo "::error::\"Build & test\" on $tested is still running (${conclusion#pending:}). Wait for it to go green, then re-dispatch; for an emergency, re-dispatch with force=true."
               exit 1 ;;
             *)
-              echo "::error::\"Build & test\" on $SHA concluded '$conclusion', not success — refusing to deploy an untested or failing commit. For an emergency, re-dispatch with force=true."
+              echo "::error::\"Build & test\" on $tested concluded '$conclusion', not success — refusing to deploy an untested or failing commit. For an emergency, re-dispatch with force=true."
               exit 1 ;;
           esac
 
