@@ -2315,6 +2315,124 @@ button.tag-chip {
     padding-top: 0.8rem;
 }
 .mealcal-detail > h3 { margin-top: 0; }
+
+/* ── Meal journal (/journal) ─────────────────────────────────────────────────────────────────────
+   A month of whole Sun–Sat weeks plus an eighth "Week" column. Day cells borrow the meal-plan grid's
+   look; days from the neighbouring months that square off a row are dimmed, not hidden, because the
+   Week column totals the whole week. */
+.journal-monthhead {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.journal-monthhead h2 { margin: 0; min-width: 10ch; text-align: center; }
+.journal-monthhead button { padding: 0.2rem 0.7rem; }
+.journal-monthtotal { margin: 0.6rem 0 0.8rem; }
+.journalcal { margin-bottom: 1.2rem; }
+.journalcal-row {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr)) minmax(4.5rem, 0.9fr);
+    gap: 4px;
+    margin-bottom: 4px;
+}
+.journalcal-head {
+    font-size: 0.75rem;
+    color: var(--ink-soft);
+    text-align: center;
+}
+.journalcal-day {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-height: 3.6rem;
+    padding: 4px;
+    text-align: left;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    overflow: hidden;
+}
+.journalcal-day:hover:not(:disabled) { border-color: var(--accent); }
+.journalcal-day.today { border-color: var(--accent); }
+.journalcal-day.selected {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+    background: var(--surface-alt);
+}
+.journalcal-day.outside { opacity: 0.55; }
+.journalcal-day:disabled { opacity: 0.35; cursor: default; }
+.journalcal-daynum {
+    font-size: 0.75rem;
+    color: var(--ink-soft);
+    font-weight: 600;
+}
+.journalcal-day.today .journalcal-daynum { color: var(--accent-ink); }
+.journalcal-kcal { font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.journalcal-week {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 4px 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    background: var(--surface-alt);
+    border-radius: 6px;
+}
+.journal-day {
+    border-top: 1px solid var(--line);
+    padding-top: 0.8rem;
+}
+.journal-day > h3 { margin-top: 0; }
+.journal-meal {
+    border-left: 3px solid var(--unknown-line);
+    padding-left: 0.7rem;
+    margin-bottom: 0.9rem;
+}
+.journal-meal.slot-breakfast { border-left-color: var(--duesoon-line); }
+.journal-meal.slot-lunch { border-left-color: var(--stocked-line); }
+.journal-meal.slot-dinner { border-left-color: var(--accent); }
+.journal-meal.slot-snack { border-left-color: var(--plan-line); }
+.journal-meal h4 { margin: 0 0 0.3rem; }
+.journal-meal ul { list-style: none; margin: 0; padding: 0; }
+.journal-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.3rem 0.8rem;
+    padding: 0.25rem 0;
+}
+.journal-food { flex: 1 1 12rem; }
+.journal-kcal { font-variant-numeric: tabular-nums; }
+.journal-est,
+.journal-est-tag { color: var(--ink-soft); }
+.journal-est-tag {
+    font-size: 0.72rem;
+    margin-left: 0.3rem;
+    padding: 0 0.35rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+}
+.journal-actions .linkish:first-child { margin-left: 0; }
+.journal-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+    flex: 1 1 100%;
+}
+.journal-form input:not([type=number]) { flex: 1 1 12rem; }
+.journal-form input[type=number] { width: 6.5rem; }
+.journal-add { margin-top: 0.6rem; }
+@media (max-width: 600px) {
+    .journalcal-row { grid-template-columns: repeat(7, minmax(0, 1fr)) minmax(3.2rem, 0.8fr); gap: 2px; }
+    .journalcal-day { min-height: 3rem; padding: 2px; }
+    .journalcal-kcal, .journalcal-week { font-size: 0.66rem; }
+}
 /* Meal card header: title on the left, the per-slot reroll on the right. */
 .mealcal-cardtop {
     display: flex;

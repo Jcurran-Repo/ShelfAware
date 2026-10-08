@@ -15,6 +15,7 @@ public static class SiteNav
         new("Recipes", "/recipes"),
         new("Cookbook", "/cookbook"),
         new("Meal Plan", "/meal-plan"),
+        new("Journal", "/journal"),
         new("Trends", "/trends"),
         new("Reports", "/reports"),
         new("Upload", "/receipt"),
