@@ -34,8 +34,9 @@ public sealed record TourStep(string Route, string Title, string Body, string? A
     /// box's shape since 2026-09-21). The same rule as <see cref="WhenManaged"/>, one deployment fact over:
     /// a step that promises "the 🎙 Assistant does the same hands-free" on a box where no microphone
     /// affordance renders is a screen stating something the app will not do. Null means the step never
-    /// mentions listening, which is true of every step but two. Checked after the managed variant, so a
-    /// step that is both managed-specific and voice-specific needs only one of them — none is today.
+    /// mentions listening or the Assistant, which is true of every step but three. Checked after the
+    /// managed variant, so a step carrying both reads its managed copy on a managed deaf box (the demo) —
+    /// which is why that copy must not mention listening either; <c>TourScriptDeafBoxTests</c> holds it.
     /// </summary>
     public TourVariant? WhenDeaf { get; init; }
 
@@ -143,6 +144,10 @@ public static class TourScript
             + "You can export or delete everything from this page whenever you like.",
             "[data-tour=ai-keys]")
         {
+            WhenDeaf = new TourVariant("Your key, your data",
+                "Everything you've just seen works without an API key. Adding your own — it stays in your browser, "
+                + "never on the server — switches on receipt reading and recipe ideas. "
+                + "You can export or delete everything from this page whenever you like."),
             WhenManaged = new TourVariant("Your data",
                 "The AI features here run on the keys whoever set this up provided, so there's nothing for you "
                 + "to configure. This page is where you export everything you've got, or delete the lot."),

@@ -186,25 +186,28 @@ public class TourScriptDeafBoxTests
     [Fact]
     public void A_box_that_cannot_hear_is_never_promised_a_microphone()
     {
+        // Both management shapes: the demo box is managed AND deaf, and a managed variant wins over a deaf
+        // one, so a managed variant that mentioned listening would reach exactly that box.
+        foreach (var managed in new[] { false, true })
         foreach (var step in TourScript.Steps)
         {
-            var body = step.BodyFor(managed: false, canHear: false);
+            var body = step.BodyFor(managed, canHear: false);
             foreach (var phrase in ListeningPhrases)
                 Assert.DoesNotContain(phrase, body, StringComparison.OrdinalIgnoreCase);
         }
     }
 
     [Fact]
-    public void Only_the_two_steps_that_mention_listening_carry_a_deaf_variant()
+    public void Only_the_steps_that_mention_listening_carry_a_deaf_variant()
     {
         // Every other step reads the same whether or not the box can hear — it must not silently acquire
         // a second voice (the rule A_step_without_a_managed_variant_reads_the_same_either_way holds for
         // the managed axis).
         var withVariant = TourScript.Steps.Where(s => s.WhenDeaf is not null).ToList();
-        Assert.Equal(2, withVariant.Count);
-        // ...and each of those two really does mention listening in its hearing-box copy.
-        Assert.All(withVariant, s => Assert.True(ListeningPhrases.Any(
-            phrase => s.Body.Contains(phrase, StringComparison.OrdinalIgnoreCase))));
+        Assert.Equal(3, withVariant.Count);
+        // ...and each of those really does mention listening (or the Assistant) in its hearing-box copy.
+        Assert.All(withVariant, s => Assert.Contains(ListeningPhrases,
+            phrase => s.Body.Contains(phrase, StringComparison.OrdinalIgnoreCase)));
         foreach (var step in TourScript.Steps.Where(s => s.WhenDeaf is null))
         {
             Assert.Equal(step.Body, step.BodyFor(managed: false, canHear: false));

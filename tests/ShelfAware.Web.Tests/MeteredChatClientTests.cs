@@ -710,8 +710,7 @@ public class MeteredChatClientTests : IDisposable
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => AskAsync(client));
 
-        Assert.Contains("allowance", ex.Message);
-        Assert.Contains("your own key", ex.Message);
+        Assert.Equal(AiUsageMeter.DailyAllowanceUsedUp, ex.Message);
         Assert.Equal(0, _provider.Calls);
     }
 
