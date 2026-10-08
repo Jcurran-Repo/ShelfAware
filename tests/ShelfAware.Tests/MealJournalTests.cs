@@ -344,4 +344,45 @@ public class MealJournalTests
     {
         Assert.Equal(expected, MealJournal.Number(value));
     }
+
+    [Fact]
+    public void A_phrase_that_must_say_something_says_no_calorie_count_where_kcal_is_blank()
+    {
+        Assert.Equal("~200 kcal", MealJournal.Total([E(Thursday, 200, true)]).KcalOrUncounted);
+        Assert.Equal("no calorie count", MealJournal.Total([E(Thursday, null)]).KcalOrUncounted);
+    }
+
+    [Fact]
+    public void Items_are_counted_in_words_with_the_right_plural()
+    {
+        Assert.Equal("1 item", MealJournal.Total([E(Thursday, null)]).ItemsText);
+        Assert.Equal("2 items", MealJournal.Total([E(Thursday, 100), E(Thursday, null)]).ItemsText);
+        Assert.Equal("0 items", CalorieTotal.None.ItemsText);
+    }
+
+    [Fact]
+    public void In_keeps_exactly_the_entries_eaten_inside_the_span()
+    {
+        var before = E(Thursday.AddDays(-1), 1);
+        var first = E(Thursday, 2);
+        var last = E(Thursday.AddDays(1), 3);
+        var after = E(Thursday.AddDays(2), 4);
+
+        Assert.Equal([first, last], MealJournal.In([before, first, last, after], new DateSpan(Thursday, Thursday.AddDays(1))));
+    }
+
+    [Fact]
+    public void A_meal_is_named_in_lowercase_inside_a_sentence()
+    {
+        Assert.Equal("breakfast", MealJournal.SlotName(MealSlot.Breakfast));
+        Assert.Equal("snack", MealJournal.SlotName(MealSlot.Snack));
+    }
+
+    [Fact]
+    public void A_new_entry_names_no_member_so_the_context_knows_to_stamp_it()
+    {
+        // The per-person write guard stamps a row whose MemberId is empty and refuses any other value —
+        // so "unset" has to be exactly empty, never a placeholder that would read as someone else.
+        Assert.Equal("", new JournalEntry { Food = "Toast" }.MemberId);
+    }
 }

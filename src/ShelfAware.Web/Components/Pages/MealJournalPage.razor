@@ -7,7 +7,8 @@
 
 <PageTitle>Meal Journal — Reginald</PageTitle>
 
-<header class="page-head">
+@* data-private-page: bug-capture.js leaves this page's text out of a bug report — it is one person's own. *@
+<header class="page-head" data-private-page>
     <h1>Meal Journal</h1>
 </header>
 
@@ -57,19 +58,21 @@
 
         @* Whole Sunday–Saturday weeks (MealJournal.MonthGrid), so the Week column totals real weeks — the
            neighbouring months' days that square off a row are shown dimmed, not hidden. *@
-        <div class="journalcal" role="grid" aria-label="Meal journal calendar">
-            <div class="journalcal-row journalcal-head" role="row">
+        @* Not an ARIA grid: a grid owes arrow-key navigation, and these are plain toggle buttons whose
+           labels already name their day — so the weekday header row is decoration for the eye only. *@
+        <div class="journalcal" role="group" aria-label="Meal journal calendar">
+            <div class="journalcal-row journalcal-head" aria-hidden="true">
                 @foreach (var wd in WeekdayLabels)
                 {
-                    <div role="columnheader">@wd</div>
+                    <div>@wd</div>
                 }
-                <div role="columnheader">Week</div>
+                <div>Week</div>
             </div>
             @foreach (var week in MealJournal.MonthGrid(month.Year, month.Month))
             {
                 var weekSpan = MealJournal.SpanOf(JournalPeriod.Week, week[0]);
                 var weekTotal = MealJournal.Total(entries, weekSpan);
-                <div class="journalcal-row" role="row">
+                <div class="journalcal-row">
                     @foreach (var date in week)
                     {
                         var dayTotal = MealJournal.Total(entries, MealJournal.SpanOf(JournalPeriod.Day, date));
@@ -78,7 +81,7 @@
                             + (date.Month != month.Month ? " outside" : "")
                             + (date == Today ? " today" : "")
                             + (date == selected ? " selected" : "");
-                        <button type="button" role="gridcell" class="@dayClass"
+                        <button type="button" class="@dayClass"
                                 disabled="@future"
                                 @onclick="() => Select(date)"
                                 aria-pressed="@(date == selected ? "true" : "false")"
@@ -94,9 +97,13 @@
                             }
                         </button>
                     }
-                    <div class="journalcal-week" role="gridcell"
-                         aria-label="@($"Total for {MealJournal.Label(JournalPeriod.Week, weekSpan)}: {weekTotal.Kcal ?? "nothing counted"}")">
-                        @(weekTotal.Kcal ?? "—")
+                    <div class="journalcal-week">
+                        <span class="visually-hidden">Total for @MealJournal.Label(JournalPeriod.Week, weekSpan):</span>
+                        <span aria-hidden="@(weekTotal.Kcal is null ? "true" : "false")">@(weekTotal.Kcal ?? "—")</span>
+                        @if (weekTotal.Kcal is null)
+                        {
+                            <span class="visually-hidden">nothing counted</span>
+                        }
                     </div>
                 </div>
             }
@@ -104,7 +111,7 @@
 
         <div class="journal-day">
             @{
-                var dayEntries = entries.Where(e => e.EatenOn == selected).ToList();
+                var dayEntries = MealJournal.In(entries, MealJournal.SpanOf(JournalPeriod.Day, selected)).ToList();
                 var selectedTotal = MealJournal.Total(dayEntries);
             }
             <h3>
@@ -125,7 +132,7 @@
             }
             @foreach (var meal in MealJournal.Meals(dayEntries))
             {
-                <div class="journal-meal slot-@meal.Slot.ToString().ToLowerInvariant()">
+                <div class="journal-meal slot-@MealJournal.SlotName(meal.Slot)">
                     <h4>@meal.Slot <span class="muted">@(meal.Total.Kcal ?? "")</span></h4>
                     <ul>
                         @foreach (var item in meal.Items)
@@ -151,7 +158,7 @@
                                 {
                                     <span class="journal-food">@item.Food</span>
                                     <span class="journal-kcal">
-                                        @(MealJournal.Total([item]).Kcal ?? "no calorie count")
+                                        @MealJournal.Total([item]).KcalOrUncounted
                                         @if (item.CaloriesEstimated)
                                         {
                                             <span class="journal-est-tag" title="Reginald's estimate — Edit to correct it">estimate</span>
@@ -260,7 +267,9 @@
     private async Task LoadAsync()
     {
         var grid = MealJournal.MonthGrid(month.Year, month.Month);
-        entries = [.. await Journal.GetAsync(new DateSpan(grid[0][0], grid[^1][^1]))];
+        var read = await Journal.GetAsync(new DateSpan(grid[0][0], grid[^1][^1]));
+        entries = [.. read.Entries];
+        if (read.Problem is { } problem) Notify(problem, error: true);
     }
 
     private async Task ShowMonth(DateOnly firstOfMonth)
@@ -330,7 +339,7 @@
                 Notify(problem, error: true);
                 return;
             }
-            Notify($"Added {write.Entry!.Food} to {write.Entry.Slot.ToString().ToLowerInvariant()}.");
+            Notify($"Added {write.Entry!.Food} to {MealJournal.SlotName(write.Entry.Slot)}.");
             addForm = new EntryForm { Slot = addForm.Slot };
             await LoadAsync();
         }
@@ -398,6 +407,6 @@
         var label = MealJournal.Label(JournalPeriod.Day, MealJournal.SpanOf(JournalPeriod.Day, date));
         if (date > Today) return $"{label}: not yet";
         if (total.Items == 0) return $"{label}: nothing logged";
-        return $"{label}: {total.Kcal ?? "no calorie count"}, {total.Items} {(total.Items == 1 ? "item" : "items")}";
+        return $"{label}: {total.KcalOrUncounted}, {total.ItemsText}";
     }
 }

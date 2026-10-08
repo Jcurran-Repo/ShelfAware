@@ -33,6 +33,13 @@ public sealed record CalorieTotal(int Calories, int Counted, int Uncounted, bool
         ? null
         : $"{(Estimated ? "~" : "")}{MealJournal.Number(Calories)} kcal";
 
+    /// <summary><see cref="Kcal"/>, or "no calorie count" where a phrase has to say something — one food's
+    /// line, or Reginald's answer.</summary>
+    public string KcalOrUncounted => Kcal ?? "no calorie count";
+
+    /// <summary>"1 item" / "3 items" — every entry looked at.</summary>
+    public string ItemsText => Items == 1 ? "1 item" : $"{Items} items";
+
     /// <summary>"2 items have no calorie count", or null when every item had one.</summary>
     public string? UncountedNote => Uncounted == 0
         ? null
@@ -99,9 +106,16 @@ public static class MealJournal
         return new CalorieTotal(calories, counted, uncounted, estimated);
     }
 
+    /// <summary>The entries eaten inside <paramref name="span"/> — the one reading of "which meals were on
+    /// that day", for the totals and the page's day list alike.</summary>
+    public static IEnumerable<JournalEntry> In(IEnumerable<JournalEntry> entries, DateSpan span) =>
+        entries.Where(e => span.Contains(e.EatenOn));
+
     /// <summary>The total over the entries eaten inside <paramref name="span"/>.</summary>
-    public static CalorieTotal Total(IEnumerable<JournalEntry> entries, DateSpan span) =>
-        Total(entries.Where(e => span.Contains(e.EatenOn)));
+    public static CalorieTotal Total(IEnumerable<JournalEntry> entries, DateSpan span) => Total(In(entries, span));
+
+    /// <summary>A meal named inside a sentence: "lunch".</summary>
+    public static string SlotName(MealSlot slot) => slot.ToString().ToLowerInvariant();
 
     /// <summary>One day's entries as meals: only the slots that have something in them, in the order the
     /// day is eaten (breakfast, lunch, dinner, snack), each meal's foods in the order they were logged.</summary>
@@ -160,7 +174,7 @@ public static class MealJournal
     {
         var label = Label(period, span);
         if (total.Items == 0) return $"Nothing is logged for {label}.";
-        var items = $"{total.Items} {(total.Items == 1 ? "item" : "items")}";
+        var items = total.ItemsText;
         var sentence = total.Counted == 0
             ? $"For {label}: {items} logged, none with a calorie count."
             : $"For {label}: {(total.Estimated ? "about " : "")}{Number(total.Calories)} calories across {items}"

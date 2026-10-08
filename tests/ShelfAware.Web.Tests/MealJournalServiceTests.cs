@@ -44,7 +44,7 @@ public class MealJournalServiceTests : IDisposable
         var write = await journal.LogAsync(Draft(food: "  Turkey sandwich  "));
 
         Assert.Null(write.Problem);
-        var entry = Assert.Single(await journal.GetAsync(TodayOnly));
+        var entry = Assert.Single((await journal.GetAsync(TodayOnly)).Entries);
         Assert.Equal("Turkey sandwich", entry.Food);
         Assert.Equal(450, entry.Calories);
         Assert.True(entry.CaloriesEstimated);
@@ -59,7 +59,7 @@ public class MealJournalServiceTests : IDisposable
         var journal = As(Jordan);
         await journal.LogAsync(Draft(calories: null, estimated: true));
 
-        Assert.False(Assert.Single(await journal.GetAsync(TodayOnly)).CaloriesEstimated);
+        Assert.False(Assert.Single((await journal.GetAsync(TodayOnly)).Entries).CaloriesEstimated);
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public class MealJournalServiceTests : IDisposable
 
         Assert.Equal(MealJournal.Problem("x", 1, Today.AddDays(1), Today), write.Problem);
         Assert.Null(write.Entry);
-        Assert.Empty(await journal.GetAsync(new DateSpan(Today, Today.AddDays(1))));
+        Assert.Empty((await journal.GetAsync(new DateSpan(Today, Today.AddDays(1)))).Entries);
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public class MealJournalServiceTests : IDisposable
         await journal.LogAsync(Draft(food: "Outside", on: Today.AddDays(-5)));
         await journal.LogAsync(Draft(food: "Early", on: Today.AddDays(-1)));
 
-        var read = await journal.GetAsync(new DateSpan(Today.AddDays(-1), Today));
+        var read = (await journal.GetAsync(new DateSpan(Today.AddDays(-1), Today))).Entries;
 
         Assert.Equal(["Early", "Late"], read.Select(e => e.Food));
     }
@@ -98,7 +98,7 @@ public class MealJournalServiceTests : IDisposable
 
         Assert.Null(fixedUp.Problem);
         Assert.Equal("Calories can't be negative.", refused.Problem);
-        var entry = Assert.Single(await journal.GetAsync(TodayOnly));
+        var entry = Assert.Single((await journal.GetAsync(TodayOnly)).Entries);
         Assert.Equal(("Half a sandwich", 225, false, MealSlot.Snack), (entry.Food, entry.Calories, entry.CaloriesEstimated, entry.Slot));
     }
 
@@ -118,7 +118,7 @@ public class MealJournalServiceTests : IDisposable
         var id = (await journal.LogAsync(Draft())).Entry!.Id;
 
         Assert.True(await journal.DeleteAsync(id));
-        Assert.Empty(await journal.GetAsync(TodayOnly));
+        Assert.Empty((await journal.GetAsync(TodayOnly)).Entries);
     }
 
     // --- privacy --------------------------------------------------------------------------------
@@ -128,8 +128,8 @@ public class MealJournalServiceTests : IDisposable
     {
         await As(Jordan).LogAsync(Draft(food: "Jordan's lunch"));
 
-        Assert.Empty(await As(Spouse).GetAsync(TodayOnly));
-        Assert.Equal("Jordan's lunch", Assert.Single(await As(Jordan).GetAsync(TodayOnly)).Food);
+        Assert.Empty((await As(Spouse).GetAsync(TodayOnly)).Entries);
+        Assert.Equal("Jordan's lunch", Assert.Single((await As(Jordan).GetAsync(TodayOnly)).Entries).Food);
     }
 
     [Fact]
@@ -141,7 +141,7 @@ public class MealJournalServiceTests : IDisposable
         Assert.Equal("That entry is no longer in your journal.", (await spouse.UpdateAsync(id, Draft(food: "Edited"))).Problem);
         Assert.False(await spouse.DeleteAsync(id));
 
-        Assert.Equal("Jordan's lunch", Assert.Single(await As(Jordan).GetAsync(TodayOnly)).Food);
+        Assert.Equal("Jordan's lunch", Assert.Single((await As(Jordan).GetAsync(TodayOnly)).Entries).Food);
     }
 
     [Fact]
@@ -150,16 +150,17 @@ public class MealJournalServiceTests : IDisposable
         // Belt and braces: the member filter narrows the household one, it does not replace it.
         await As(Jordan, household: "hh-a").LogAsync(Draft());
 
-        Assert.Empty(await As(Jordan, household: "hh-b").GetAsync(TodayOnly));
+        Assert.Empty((await As(Jordan, household: "hh-b").GetAsync(TodayOnly)).Entries);
     }
 
     [Fact]
-    public async Task A_scope_with_nobody_signed_in_reads_nothing_and_cannot_write()
+    public async Task A_scope_with_nobody_signed_in_is_refused_rather_than_read_as_empty_and_cannot_write()
     {
         await As(Jordan).LogAsync(Draft());
 
         var nobody = As(member: null);
-        Assert.Empty(await nobody.GetAsync(TodayOnly));
+        var read = await nobody.GetAsync(TodayOnly);
+        Assert.Equal((0, MealJournalService.NobodySignedIn), (read.Entries.Count, read.Problem));
         var write = await nobody.LogAsync(Draft());
         Assert.Equal(MealJournalService.NobodySignedIn, write.Problem);
     }
@@ -206,7 +207,7 @@ public class MealJournalServiceTests : IDisposable
             await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
         }
 
-        Assert.Equal("Turkey sandwich", Assert.Single(await As(Jordan).GetAsync(TodayOnly)).Food);
+        Assert.Equal("Turkey sandwich", Assert.Single((await As(Jordan).GetAsync(TodayOnly)).Entries).Food);
     }
 
     [Fact]

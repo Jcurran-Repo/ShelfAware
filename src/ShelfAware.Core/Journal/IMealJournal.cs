@@ -14,9 +14,10 @@ public interface IMealJournal
     /// can skip the rule; a refusal comes back as text to relay, not an exception.</summary>
     Task<JournalWrite> LogAsync(JournalDraft draft, CancellationToken cancellationToken = default);
 
-    /// <summary>The signed-in person's entries eaten inside <paramref name="span"/> (empty when nobody is
-    /// signed in).</summary>
-    Task<IReadOnlyList<JournalEntry>> GetAsync(DateSpan span, CancellationToken cancellationToken = default);
+    /// <summary>The signed-in person's entries eaten inside <paramref name="span"/> — or, when nobody is signed
+    /// in, a <see cref="JournalRead.Problem"/>, so "nothing logged" is never said about a journal no one could
+    /// see.</summary>
+    Task<JournalRead> GetAsync(DateSpan span, CancellationToken cancellationToken = default);
 }
 
 /// <summary>An entry as asked for, before it is written.</summary>
@@ -29,4 +30,11 @@ public sealed record JournalWrite(JournalEntry? Entry, string? Problem)
 {
     public static JournalWrite Saved(JournalEntry entry) => new(entry, null);
     public static JournalWrite Refused(string problem) => new(null, problem);
+}
+
+/// <summary>The outcome of a journal read: the person's entries, or why there is no person to read for.</summary>
+public sealed record JournalRead(IReadOnlyList<JournalEntry> Entries, string? Problem)
+{
+    public static JournalRead Of(IReadOnlyList<JournalEntry> entries) => new(entries, null);
+    public static JournalRead Refused(string problem) => new([], problem);
 }

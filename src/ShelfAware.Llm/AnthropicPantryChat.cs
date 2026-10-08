@@ -758,11 +758,12 @@ public class AnthropicPantryChat : IPantryChat
                     return ($"Couldn't read \"{rawDate}\" as a date — pass it as YYYY-MM-DD.", true);
 
                 // A saved recipe is logged at ITS per-serving figure, not a fresh guess: the journal and the
-                // Reports tab's calories-cooked chart then price the same dish the same way.
+                // Reports tab's calories-cooked chart then price the same dish the same way. A number the
+                // person said themselves outranks both — it is theirs, and the recipe's is an estimate.
                 int? calories = Int("calories");
-                var stated = Bool("calories_stated") == true;
+                var stated = calories is not null && Bool("calories_stated") == true;
                 var note = "";
-                if (Str("recipe_name") is { Length: > 0 } recipeName)
+                if (!stated && Str("recipe_name") is { Length: > 0 } recipeName)
                 {
                     var recipe = ResolveRecipe(recipeName, await _store.GetRecipesAsync(ct));
                     if (recipe?.CaloriesPerServing is { } perServing)
@@ -770,7 +771,6 @@ public class AnthropicPantryChat : IPantryChat
                         var servings = Dec("servings") ?? 1m;
                         if (servings <= 0 || servings > 20) return ("servings must be more than 0 and at most 20.", true);
                         calories = (int)Math.Round(perServing * servings, MidpointRounding.AwayFromZero);
-                        stated = false;
                         note = $" (from the saved {recipe.Name} recipe)";
                     }
                 }
@@ -779,8 +779,8 @@ public class AnthropicPantryChat : IPantryChat
                 if (write.Entry is not { } entry) return (write.Problem!, true);
                 wrote.Mark();
                 actions.Add($"journal → {entry.Food}");
-                var kcal = MealJournal.Total([entry]).Kcal ?? "no calorie count";
-                return ($"Logged {entry.Food} for {entry.Slot.ToString().ToLowerInvariant()} on {entry.EatenOn:yyyy-MM-dd}: {kcal}{note}"
+                var kcal = MealJournal.Total([entry]).KcalOrUncounted;
+                return ($"Logged {entry.Food} for {MealJournal.SlotName(entry.Slot)} on {entry.EatenOn:yyyy-MM-dd}: {kcal}{note}"
                     + (entry.CaloriesEstimated ? " — an estimate, which they can correct on the Journal page." : "."), false);
             }
 
@@ -794,12 +794,15 @@ public class AnthropicPantryChat : IPantryChat
                     !DateOnly.TryParseExact(rawDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out day))
                     return ($"Couldn't read \"{rawDate}\" as a date — pass it as YYYY-MM-DD.", true);
                 var span = MealJournal.SpanOf(period, day);
-                var entries = await _journal.GetAsync(span, ct);
+                var read = await _journal.GetAsync(span, ct);
+                // "Nothing is logged" would be a claim about a journal nobody could see — refuse instead.
+                if (read.Problem is { } unreadable) return (unreadable, true);
+                var entries = read.Entries;
                 var answer = MealJournal.Describe(period, span, MealJournal.Total(entries));
                 // A day is small enough to say what was in it; a week or a month is a number.
                 if (period == JournalPeriod.Day)
                     foreach (var meal in MealJournal.Meals(entries))
-                        answer += $" {meal.Slot}: {string.Join(", ", meal.Items.Select(i => i.Food))} ({meal.Total.Kcal ?? "no calorie count"}).";
+                        answer += $" {meal.Slot}: {string.Join(", ", meal.Items.Select(i => i.Food))} ({meal.Total.KcalOrUncounted}).";
                 return (answer, false);
             }
 

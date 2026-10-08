@@ -41,16 +41,17 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
         return JournalWrite.Saved(entry);
     }
 
-    public async Task<IReadOnlyList<JournalEntry>> GetAsync(DateSpan span, CancellationToken cancellationToken = default)
+    public async Task<JournalRead> GetAsync(DateSpan span, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.JournalEntries
+        if (db.MemberId is null) return JournalRead.Refused(NobodySignedIn);
+        return JournalRead.Of(await db.JournalEntries
             .AsNoTracking()
             .Where(e => e.EatenOn >= span.From && e.EatenOn <= span.To)
             // Day, then the order the rows were written — the id, because SQLite cannot ORDER BY a
             // DateTimeOffset, and an id is the write order LoggedAt would give anyway.
             .OrderBy(e => e.EatenOn).ThenBy(e => e.Id)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken));
     }
 
     /// <summary>Correct an entry. Refused, not clamped, when the correction breaks the rule — this is a

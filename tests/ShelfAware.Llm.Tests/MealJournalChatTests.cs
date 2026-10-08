@@ -37,8 +37,13 @@ public class MealJournalChatTests
             return Task.FromResult(JournalWrite.Saved(entry));
         }
 
-        public Task<IReadOnlyList<JournalEntry>> GetAsync(DateSpan span, CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<JournalEntry>>([.. Entries.Where(e => span.Contains(e.EatenOn))]);
+        /// <summary>Set to play a scope with nobody signed in.</summary>
+        public string? Unreadable { get; set; }
+
+        public Task<JournalRead> GetAsync(DateSpan span, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Unreadable is { } problem
+                ? JournalRead.Refused(problem)
+                : JournalRead.Of([.. Entries.Where(e => span.Contains(e.EatenOn))]));
     }
 
     private static AnthropicPantryChat Chat(IChatClient client, FakeMealJournal? journal, FakePantryStore? store = null) =>
@@ -161,15 +166,48 @@ public class MealJournalChatTests
         store.Recipes.Add(new RecipeRef(7, "Chicken Chili", HasSteps: true, CaloriesPerServing: 420));
         var journal = new FakeMealJournal();
         var client = Script(Responses.Call("log_meal",
-            ("food", "chili"), ("meal", "Dinner"), ("calories", 900), ("calories_stated", true),
+            ("food", "chili"), ("meal", "Dinner"), ("calories", 900),
             ("recipe_name", "chili"), ("servings", 1.5)));
 
         await Chat(client, journal, store).HandleAsync("I had a bowl and a half of the chicken chili");
 
         var draft = Assert.Single(journal.Drafts);
         Assert.Equal(630, draft.Calories);
-        Assert.True(draft.CaloriesEstimated); // a recipe's figure is an estimate, whatever the model claimed
+        Assert.True(draft.CaloriesEstimated); // a recipe's figure is an estimate
         Assert.Contains("from the saved Chicken Chili recipe", ToolReply(client));
+    }
+
+    [Fact]
+    public async Task A_number_the_user_said_outranks_the_saved_recipes_estimate()
+    {
+        // "chili, 700 calories" — the person weighed it or read a label; the recipe's figure is a guess.
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(7, "Chicken Chili", HasSteps: true, CaloriesPerServing: 420));
+        var journal = new FakeMealJournal();
+        var client = Script(Responses.Call("log_meal",
+            ("food", "chili"), ("meal", "Dinner"), ("calories", 700), ("calories_stated", true),
+            ("recipe_name", "chili"), ("servings", 1.5)));
+
+        await Chat(client, journal, store).HandleAsync("I had the chicken chili, 700 calories");
+
+        var draft = Assert.Single(journal.Drafts);
+        Assert.Equal((700, false), (draft.Calories, draft.CaloriesEstimated));
+        Assert.DoesNotContain("from the saved", ToolReply(client));
+    }
+
+    [Fact]
+    public async Task Stated_with_no_number_is_not_a_stated_number_so_the_recipe_still_prices_it()
+    {
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(7, "Chicken Chili", HasSteps: true, CaloriesPerServing: 420));
+        var journal = new FakeMealJournal();
+        var client = Script(Responses.Call("log_meal",
+            ("food", "chili"), ("meal", "Dinner"), ("calories_stated", true), ("recipe_name", "chili")));
+
+        await Chat(client, journal, store).HandleAsync("I had the chicken chili");
+
+        var draft = Assert.Single(journal.Drafts);
+        Assert.Equal((420, true), (draft.Calories, draft.CaloriesEstimated));
     }
 
     [Fact]
@@ -264,6 +302,17 @@ public class MealJournalChatTests
         await Chat(client, journal).HandleAsync("how much did I eat last November?");
 
         Assert.Equal("For November 2025: 1,200 calories across 1 item.", ToolReply(client));
+    }
+
+    [Fact]
+    public async Task With_nobody_to_read_for_the_answer_is_the_refusal_not_nothing_logged()
+    {
+        var journal = new FakeMealJournal { Unreadable = "Nobody is signed in." };
+        var client = Script(Responses.Call("query_journal", ("period", "day")));
+
+        await Chat(client, journal).HandleAsync("what did I eat today?");
+
+        Assert.Equal("Nobody is signed in.", ToolReply(client));
     }
 
     [Fact]

@@ -57,8 +57,8 @@ public class MealJournalPageTests : PageTestContext
         Assert.Contains("~550 kcal this month", Collapsed(cut.Find(".journal-monthtotal")));
         Assert.Equal("~550 kcal", Collapsed(DayCell(cut, Today).QuerySelector(".journalcal-kcal")!));
         var week = MealJournal.Label(JournalPeriod.Week, MealJournal.SpanOf(JournalPeriod.Week, Today));
-        var weekCell = cut.FindAll(".journalcal-week").Single(c => c.GetAttribute("aria-label")!.Contains(week));
-        Assert.Equal("~550 kcal", Collapsed(weekCell));
+        var weekCell = cut.FindAll(".journalcal-week").Single(c => c.TextContent.Contains($"Total for {week}:"));
+        Assert.Equal($"Total for {week}: ~550 kcal", Collapsed(weekCell)); // what a screen reader hears
     }
 
     [Fact]
@@ -207,6 +207,34 @@ public class MealJournalPageTests : PageTestContext
 
         cut.WaitForAssertion(() => Assert.Contains("Leftover pizza", cut.Find(".journal-day").TextContent));
         Assert.Equal("true", DayCell(cut, earlier).GetAttribute("aria-pressed"));
+    }
+
+    [Fact]
+    public void A_week_with_nothing_counted_reads_as_nothing_counted_not_a_dash()
+    {
+        var cut = RenderPage();
+
+        var empty = cut.FindAll(".journalcal-week").First();
+        Assert.Equal("true", empty.QuerySelector("[aria-hidden]")!.GetAttribute("aria-hidden"));
+        Assert.EndsWith("nothing counted", Collapsed(empty));
+    }
+
+    [Fact]
+    public void The_calendar_is_toggle_buttons_not_a_grid_that_promises_arrow_keys()
+    {
+        var cut = RenderPage();
+
+        Assert.Empty(cut.FindAll("[role=grid], [role=gridcell], [role=row]"));
+        Assert.Equal("true", cut.Find(".journalcal-head").GetAttribute("aria-hidden"));
+    }
+
+    [Fact]
+    public void The_page_marks_itself_private_so_a_bug_report_leaves_its_meals_out()
+    {
+        // bug-capture.js skips page text under [data-private-page]; this pins the page's half of that.
+        var cut = RenderPage();
+
+        Assert.NotNull(cut.Find("[data-private-page]"));
     }
 
     [Fact]
