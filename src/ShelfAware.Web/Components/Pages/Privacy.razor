@@ -36,8 +36,8 @@
                 upload, as line items <em>and</em> as the original images, so a read can be checked or
                 retried. A receipt that could not be read is kept too, for the same reason.</li>
             <li><strong>Bug reports you file,</strong> with the page snapshot you chose to include.</li>
-            <li><strong>The About page's "notify me" list:</strong> the plan you clicked and, only if you typed
-                one, your email address — no account needed, and nothing else about you.</li>
+            <li><strong>The About page's "notify me" list:</strong> the plan you clicked, when, and, only if you
+                typed one, your email address — no account needed, and nothing else about you.</li>
             <li><strong>Operator records:</strong> an error log (which can incidentally contain a file path or
                 a household id from a failing request), per-household AI usage counts, and the credit ledger
                 where billing is enabled.</li>
@@ -126,8 +126,8 @@
             <li><strong>Delete:</strong> Settings → <em>Delete all my data</em> removes the household's pantry,
                 bug reports and settings in one transaction, then its receipt images, cached audio and recipe
                 images from disk and its API tokens.</li>
-            <li><strong>What delete does not reach:</strong> your sign-in itself, the household record, and the
-                operator's usage and credit records. There is no self-service account deletion yet — ask
+            <li><strong>What delete does not reach:</strong> your sign-in itself, the household record, the
+                operator's usage and credit records, and an email left on the "notify me" list. There is no self-service account deletion yet — ask
                 whoever runs this server to remove the account@(Email.Value.IsConfigured ? ", by replying to any email it has sent you" : "").</li>
         </ul>
     </section>
