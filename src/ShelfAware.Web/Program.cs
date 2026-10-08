@@ -14,6 +14,7 @@ using System.Text.Json;
 using ShelfAware.Core.Billing;
 using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
+using ShelfAware.Core.Journal;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Extraction;
 using ShelfAware.Core.Ingest;
@@ -68,7 +69,10 @@ builder.Services.AddSingleton(new AppPaths(dataDir, receiptsDir));
 // explicit pin for background work), and IHouseholdDbFactory hands out contexts pre-scoped to it —
 // query filters + insert stamping included. Everything that touches pantry data goes through it;
 // only the Program.cs bootstrap uses the raw factory.
-builder.Services.AddScoped<ICurrentHousehold, CurrentHousehold>();
+builder.Services.AddScoped<CurrentHousehold>();
+// One object answers both "which household" and "which person", so the two can't come from different sign-ins.
+builder.Services.AddScoped<ICurrentHousehold>(sp => sp.GetRequiredService<CurrentHousehold>());
+builder.Services.AddScoped<ICurrentMember>(sp => sp.GetRequiredService<CurrentHousehold>());
 builder.Services.AddScoped<IHouseholdDbFactory, HouseholdDbFactory>();
 
 // ---- Authentication & households (v3) ----
@@ -475,6 +479,10 @@ builder.Services.AddScoped<IRecipeImporter, AnthropicRecipeImporter>(); // photo
 // so singleton; separate from the reader because it's a browser seam rather than an AI one.
 builder.Services.AddSingleton<IShelfPhotoLoader, BrowserShelfPhotoLoader>();
 builder.Services.AddScoped<IPantryStore, EfPantryStore>();
+// The meal journal: per-PERSON (the context factory scopes it to the signed-in member). One write path for
+// Reginald's journal tools and the /journal page alike.
+builder.Services.AddScoped<MealJournalService>();
+builder.Services.AddScoped<IMealJournal>(sp => sp.GetRequiredService<MealJournalService>());
 builder.Services.AddScoped<IPantryChat, AnthropicPantryChat>();
 builder.Services.AddScoped<ITagAdvisor, AnthropicTagAdvisor>();
 builder.Services.AddScoped<IRecipeTagAdvisor, AnthropicRecipeTagAdvisor>();

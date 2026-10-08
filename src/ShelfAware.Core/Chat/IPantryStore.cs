@@ -117,7 +117,10 @@ public interface IPantryStore
 }
 
 /// <summary>Lightweight saved-recipe reference for chat-tool resolution.</summary>
-public record RecipeRef(int Id, string Name, bool HasSteps);
+/// <param name="CaloriesPerServing">The recipe's own per-serving estimate (<see cref="Recipe.EstimatedCaloriesPerServing"/>),
+/// or null. The meal journal logs a saved recipe at THIS figure rather than a fresh guess, so the journal and
+/// the Reports tab's calories-cooked chart price the same dish the same way.</param>
+public record RecipeRef(int Id, string Name, bool HasSteps, int? CaloriesPerServing = null);
 
 /// <summary>The id and stored summary of a recorded undoable action — enough for an inline "↩ Undo".</summary>
 public sealed record ActivityRef(int Id, string Summary);

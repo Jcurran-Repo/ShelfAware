@@ -205,6 +205,48 @@ public class UserDataServiceTests : IDisposable
         await db.SaveChangesAsync();
     }
 
+    /// <summary>Two members' journals in the one household: the default TestDb member's, and another's.</summary>
+    private async Task SeedTwoJournals()
+    {
+        await using (var mine = _db.CreateDbContext())
+        {
+            mine.JournalEntries.Add(new JournalEntry { Food = "My toast", EatenOn = new DateOnly(2026, 10, 8), Slot = MealSlot.Breakfast, Calories = 150 });
+            await mine.SaveChangesAsync();
+        }
+        var me = _db.MemberId;
+        _db.MemberId = "member-spouse";
+        await using (var theirs = _db.CreateDbContext())
+        {
+            theirs.JournalEntries.Add(new JournalEntry { Food = "Their salad", EatenOn = new DateOnly(2026, 10, 8), Slot = MealSlot.Lunch, Calories = 300 });
+            await theirs.SaveChangesAsync();
+        }
+        _db.MemberId = me;
+    }
+
+    [Fact]
+    public async Task The_export_carries_the_callers_journal_and_never_another_members()
+    {
+        await SeedTwoJournals();
+
+        var export = await Service().ExportAsync();
+
+        Assert.Equal("My toast", Assert.Single(export.JournalEntries).Food);
+    }
+
+    [Fact]
+    public async Task Delete_all_removes_the_callers_journal_and_leaves_another_members_alone()
+    {
+        await SeedTwoJournals();
+        var svc = Service();
+        Assert.Equal(1, await svc.CountAllAsync()); // the caller's one entry is the whole count
+
+        await svc.DeleteAllAsync();
+
+        Assert.Equal(0, await svc.CountAllAsync());
+        await using var raw = _db.CreateUnscopedContext();
+        Assert.Equal("Their salad", (await raw.JournalEntries.IgnoreQueryFilters().SingleAsync()).Food);
+    }
+
     [Fact]
     public async Task DeleteAllAsync_empties_every_user_table()
     {

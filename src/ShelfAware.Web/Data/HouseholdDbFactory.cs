@@ -12,13 +12,19 @@ public interface IHouseholdDbFactory
     Task<ShelfAwareDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default);
 }
 
+/// <param name="member">Who inside the household is asking — scopes the per-person tables (the meal
+/// journal). Required, so no construction can forget it and quietly get a context that sees no one's meals.
+/// A context that knows no person reads nothing from those tables and refuses to write them
+/// (<see cref="ShelfAwareDbContext.MemberId"/>).</param>
 public sealed class HouseholdDbFactory(
-    IDbContextFactory<ShelfAwareDbContext> inner, ICurrentHousehold household) : IHouseholdDbFactory
+    IDbContextFactory<ShelfAwareDbContext> inner, ICurrentHousehold household, ICurrentMember member)
+    : IHouseholdDbFactory
 {
     public async Task<ShelfAwareDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
     {
         var db = await inner.CreateDbContextAsync(cancellationToken);
         db.HouseholdId = await household.GetRequiredIdAsync(cancellationToken);
+        db.MemberId = await member.GetMemberIdAsync(cancellationToken);
         return db;
     }
 }

@@ -41,6 +41,11 @@ cross-household data makes its own case at review — do not reuse these by anal
 query filter + stamping, an isolation test, `AdditiveSchema.EnsureTable` + a schema-parity test,
 export `data.json`, delete-my-data, and `CountAll`.
 
+**Per-person tables (`IMemberOwned`, since 2026-10-08)** narrow the household one level further, to
+the signed-in member: filter on household AND member, stamp-and-refuse on both, a context with no
+member reads nothing and writes nothing. The meal journal is the only one. Export and delete-my-data
+act on the caller's rows only. See `docs/features/journal.md`.
+
 ## The schema seam
 
 `EnsureCreated` does **not** migrate. Post-v3 changes go through `AdditiveSchema`:

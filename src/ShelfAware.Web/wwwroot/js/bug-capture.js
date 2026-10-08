@@ -64,9 +64,14 @@
         return pref === 'auto' ? eff + ' (auto)' : eff;
     }
 
+    // A page that marks itself data-private-page (the meal journal: one person's own record, which the
+    // rest of the household can't see) never has its text captured — a bug report goes to the admin, and
+    // a default-on checkbox is not the place to discover your meals were in it.
+    var PRIVATE_PAGE = '[data-private-page]';
+
     function pageContent() {
         var el = document.getElementById('main-content') || document.body;
-        if (!el) return null;
+        if (!el || el.querySelector(PRIVATE_PAGE)) return null;
         var text = (el.innerText || '').replace(/\n{3,}/g, '\n\n').trim();
         if (text.length > MAX_CONTENT) text = text.slice(0, MAX_CONTENT) + '\n…(truncated)';
         return text.length ? text : null;

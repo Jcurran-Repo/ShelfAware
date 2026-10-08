@@ -79,6 +79,9 @@ public sealed class UserDataService(
             PlannedMeals = await db.PlannedMeals.AsNoTracking().ToListAsync(ct),
             LookalikePairs = await db.LookalikePairs.AsNoTracking().ToListAsync(ct),
             LookalikeClusters = await db.LookalikeClusters.AsNoTracking().ToListAsync(ct),
+            // The CALLER's journal only — the context is scoped to the signed-in person, so another
+            // member's meals are not "everything in the household's database" this person may take away.
+            JournalEntries = await db.JournalEntries.AsNoTracking().ToListAsync(ct),
         };
     }
 
@@ -297,6 +300,7 @@ public sealed class UserDataService(
             + await db.PlannedMeals.CountAsync(ct)
             + await db.LookalikePairs.CountAsync(ct)
             + await db.LookalikeClusters.CountAsync(ct)
+            + await db.JournalEntries.CountAsync(ct) // the caller's own — the same rows the delete removes
             + await db.AppSettings.CountAsync(ct);
     }
 
@@ -333,6 +337,10 @@ public sealed class UserDataService(
         await db.GroceryExtras.ExecuteDeleteAsync(ct);
         await db.SavedReports.ExecuteDeleteAsync(ct); // no FKs — but a report config is user content
         await db.BugReports.ExecuteDeleteAsync(ct); // no FKs — the household's own words, so they go too
+        // ⚠️ The CALLER's journal, not the household's: the context is scoped to the signed-in person, so
+        // this removes their meals and leaves another member's alone. A household reset is not one member
+        // erasing the other's private record — that member has the same button for their own.
+        await db.JournalEntries.ExecuteDeleteAsync(ct);
         await db.ActivityEntries.ExecuteDeleteAsync(ct); // no FKs (ids ride in PayloadJson) — user content
         await db.LookalikePairs.ExecuteDeleteAsync(ct); // no FKs (product ids are breadcrumbs) — user content
         await db.LookalikeClusters.ExecuteDeleteAsync(ct); // no FKs (keyed on a word) — user content
@@ -465,6 +473,10 @@ public sealed class DataExport
     /// <summary>Eggs's lookalike-pair memory (first-seen + dismissal). User content (it references their
     /// products), so it exports and is wiped by "delete all my data".</summary>
     public IReadOnlyList<LookalikePair> LookalikePairs { get; init; } = [];
+
+    /// <summary>The meal journal — the EXPORTING person's own entries. Per-person data, so a member's export
+    /// carries their journal and never another member's.</summary>
+    public IReadOnlyList<JournalEntry> JournalEntries { get; init; } = [];
 
     /// <summary>Eggs's lookalike-cluster memory (first-seen + dismissal, per head word). User content (it
     /// describes their catalog), so it exports and is wiped by "delete all my data".</summary>

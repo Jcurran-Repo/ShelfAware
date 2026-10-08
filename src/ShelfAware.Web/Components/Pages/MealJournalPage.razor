@@ -1,0 +1,412 @@
+@page "/journal"
+@implements IDisposable
+@using ShelfAware.Core.Journal
+@using ShelfAware.Core.MealPlanning
+@inject MealJournalService Journal
+@inject VoiceCoordinator Coordinator
+
+<PageTitle>Meal Journal — Reginald</PageTitle>
+
+@* data-private-page: bug-capture.js leaves this page's text out of a bug report — it is one person's own. *@
+<header class="page-head" data-private-page>
+    <h1>Meal Journal</h1>
+</header>
+
+<section class="panel quick-update">
+    <h2>Tell Reginald what you ate</h2>
+    <QuickUpdateBox FormName="journal-update"
+                    Placeholder="e.g. two scrambled eggs and toast for breakfast"
+                    AriaLabel="Tell Reginald what you ate"
+                    BlankHint="@BlankHint"
+                    OnApplied="LoadAsync" />
+    <p class="muted small quick-update-hint">
+        Your journal is yours alone — other members of your household don't see it. Calories marked
+        <span class="journal-est" aria-hidden="true">~</span> are Reginald's estimates; open a day to correct one.
+    </p>
+</section>
+
+<section class="panel">
+    <div class="journal-monthhead">
+        <button type="button" class="secondary" @onclick="() => ShowMonth(month.AddMonths(-1))"
+                aria-label="Previous month">‹</button>
+        <h2>@MealJournal.Label(JournalPeriod.Month, MonthSpan)</h2>
+        <button type="button" class="secondary" @onclick="() => ShowMonth(month.AddMonths(1))"
+                disabled="@(month >= ThisMonth)" aria-label="Next month">›</button>
+        @if (month != ThisMonth)
+        {
+            <button type="button" class="linkish" @onclick="() => ShowMonth(ThisMonth)">This month</button>
+        }
+    </div>
+
+    @if (entries is not null)
+    {
+        var monthTotal = MealJournal.Total(entries, MonthSpan);
+        <p class="journal-monthtotal">
+            @if (monthTotal.Kcal is { } kcal)
+            {
+                <strong>@kcal</strong><span> this month</span>
+            }
+            else
+            {
+                <span class="muted">Nothing with a calorie count logged this month yet.</span>
+            }
+            @if (monthTotal.UncountedNote is { } note)
+            {
+                <span class="muted"> · @note</span>
+            }
+        </p>
+
+        @* Whole Sunday–Saturday weeks (MealJournal.MonthGrid), so the Week column totals real weeks — the
+           neighbouring months' days that square off a row are shown dimmed, not hidden. *@
+        @* Not an ARIA grid: a grid owes arrow-key navigation, and these are plain toggle buttons whose
+           labels already name their day — so the weekday header row is decoration for the eye only. *@
+        <div class="journalcal" role="group" aria-label="Meal journal calendar">
+            <div class="journalcal-row journalcal-head" aria-hidden="true">
+                @foreach (var wd in WeekdayLabels)
+                {
+                    <div>@wd</div>
+                }
+                <div>Week</div>
+            </div>
+            @foreach (var week in MealJournal.MonthGrid(month.Year, month.Month))
+            {
+                var weekSpan = MealJournal.SpanOf(JournalPeriod.Week, week[0]);
+                var weekTotal = MealJournal.Total(entries, weekSpan);
+                <div class="journalcal-row">
+                    @foreach (var date in week)
+                    {
+                        var dayTotal = MealJournal.Total(entries, MealJournal.SpanOf(JournalPeriod.Day, date));
+                        var future = date > Today;
+                        var dayClass = "journalcal-day"
+                            + (date.Month != month.Month ? " outside" : "")
+                            + (date == Today ? " today" : "")
+                            + (date == selected ? " selected" : "");
+                        <button type="button" class="@dayClass"
+                                disabled="@future"
+                                @onclick="() => Select(date)"
+                                aria-pressed="@(date == selected ? "true" : "false")"
+                                aria-label="@DayAriaLabel(date, dayTotal)">
+                            <span class="journalcal-daynum">@date.Day</span>
+                            @if (dayTotal.Kcal is { } dayKcal)
+                            {
+                                <span class="journalcal-kcal">@dayKcal</span>
+                            }
+                            else if (dayTotal.Items > 0)
+                            {
+                                <span class="journalcal-kcal muted">@dayTotal.Items logged</span>
+                            }
+                        </button>
+                    }
+                    <div class="journalcal-week">
+                        <span class="visually-hidden">Total for @MealJournal.Label(JournalPeriod.Week, weekSpan):</span>
+                        <span aria-hidden="@(weekTotal.Kcal is null ? "true" : "false")">@(weekTotal.Kcal ?? "—")</span>
+                        @if (weekTotal.Kcal is null)
+                        {
+                            <span class="visually-hidden">nothing counted</span>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="journal-day">
+            @{
+                var dayEntries = MealJournal.In(entries, MealJournal.SpanOf(JournalPeriod.Day, selected)).ToList();
+                var selectedTotal = MealJournal.Total(dayEntries);
+            }
+            <h3>
+                @MealJournal.Label(JournalPeriod.Day, MealJournal.SpanOf(JournalPeriod.Day, selected))
+                @if (selectedTotal.Kcal is { } selKcal)
+                {
+                    <span class="muted"> — @selKcal</span>
+                }
+            </h3>
+            @if (selectedTotal.UncountedNote is { } selNote)
+            {
+                <p class="muted small">@selNote, so it isn't in the day's total.</p>
+            }
+
+            @if (dayEntries.Count == 0)
+            {
+                <p class="muted">Nothing logged for this day.</p>
+            }
+            @foreach (var meal in MealJournal.Meals(dayEntries))
+            {
+                <div class="journal-meal slot-@MealJournal.SlotName(meal.Slot)">
+                    <h4>@meal.Slot <span class="muted">@(meal.Total.Kcal ?? "")</span></h4>
+                    <ul>
+                        @foreach (var item in meal.Items)
+                        {
+                            <li class="journal-item">
+                                @if (editingId == item.Id)
+                                {
+                                    <form class="journal-form" @onsubmit="SaveEdit" @formname="@($"journal-edit-{item.Id}")">
+                                        <input @bind="form.Food" aria-label="Food" maxlength="@MealJournal.MaxFoodLength" />
+                                        <select @bind="form.Slot" aria-label="Meal">
+                                            @foreach (var s in Slots)
+                                            {
+                                                <option value="@s">@s</option>
+                                            }
+                                        </select>
+                                        <input type="number" min="0" max="@MealJournal.MaxCalories" @bind="form.Calories"
+                                               aria-label="Calories (leave blank if unknown)" placeholder="kcal" />
+                                        <button type="submit" disabled="@busy">Save</button>
+                                        <button type="button" class="secondary" @onclick="CancelEdit">Cancel</button>
+                                    </form>
+                                }
+                                else
+                                {
+                                    <span class="journal-food">@item.Food</span>
+                                    <span class="journal-kcal">
+                                        @MealJournal.Total([item]).KcalOrUncounted
+                                        @if (item.CaloriesEstimated)
+                                        {
+                                            <span class="journal-est-tag" title="Reginald's estimate — Edit to correct it">estimate</span>
+                                        }
+                                    </span>
+                                    <span class="journal-actions">
+                                        <button type="button" class="linkish" @onclick="() => StartEdit(item)"
+                                                aria-label="@($"Edit {item.Food}")">Edit</button>
+                                        <button type="button" class="linkish" @onclick="() => Delete(item)" disabled="@busy"
+                                                aria-label="@($"Remove {item.Food}")">Remove</button>
+                                    </span>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            @if (selected <= Today)
+            {
+                <form class="journal-form journal-add" @onsubmit="Add" @formname="journal-add">
+                    <input @bind="addForm.Food" aria-label="Food to add" placeholder="Add a food by hand"
+                           maxlength="@MealJournal.MaxFoodLength" />
+                    <select @bind="addForm.Slot" aria-label="Meal for the new food">
+                        @foreach (var s in Slots)
+                        {
+                            <option value="@s">@s</option>
+                        }
+                    </select>
+                    <input type="number" min="0" max="@MealJournal.MaxCalories" @bind="addForm.Calories"
+                           aria-label="Calories for the new food (optional)" placeholder="kcal" />
+                    <button type="submit" disabled="@busy">Add</button>
+                </form>
+            }
+
+            <div role="status" aria-live="polite">
+                @if (notice is not null)
+                {
+                    <p class="@(noticeIsError ? "error" : "chat-reply")">
+                        @notice
+                        @if (lastRemoved is not null)
+                        {
+                            <button type="button" class="linkish" @onclick="UndoRemove" disabled="@busy">↩ Undo</button>
+                        }
+                    </p>
+                }
+            </div>
+        </div>
+    }
+    else
+    {
+        <p class="muted">Loading…</p>
+    }
+</section>
+
+@code {
+    private static readonly string[] WeekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    private static readonly MealSlot[] Slots = Enum.GetValues<MealSlot>();
+    private const string BlankHint = "Say what you ate first — e.g. \"a turkey sandwich for lunch\".";
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private static DateOnly ThisMonth => new(Today.Year, Today.Month, 1);
+
+    /// <summary>The first of the month on screen.</summary>
+    private DateOnly month = ThisMonth;
+    private DateOnly selected = Today;
+    private DateSpan MonthSpan => MealJournal.SpanOf(JournalPeriod.Month, month);
+
+    /// <summary>Every entry in the grid's span — the month plus the days squaring off its first and last weeks.</summary>
+    private List<JournalEntry>? entries;
+
+    private int? editingId;
+    private DateOnly editingDate;
+    private bool editingWasEstimate;
+    private int? editingOriginalCalories;
+    private EntryForm form = new();
+    private EntryForm addForm = new();
+    private bool busy;
+    private string? notice;
+    private bool noticeIsError;
+    private JournalEntry? lastRemoved;
+
+    /// <summary>The fields a person edits; <see cref="Calories"/> blank means "no calorie count".</summary>
+    private sealed class EntryForm
+    {
+        public string Food { get; set; } = "";
+        public MealSlot Slot { get; set; } = MealSlot.Snack;
+        public int? Calories { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The roaming voice agent lives in the layout; when it logs a meal it pings the coordinator.
+        Coordinator.PantryChanged += OnPantryChangedAsync;
+        await LoadAsync();
+    }
+
+    public void Dispose() => Coordinator.PantryChanged -= OnPantryChangedAsync;
+
+    private async Task OnPantryChangedAsync()
+    {
+        await LoadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAsync()
+    {
+        var grid = MealJournal.MonthGrid(month.Year, month.Month);
+        var read = await Journal.GetAsync(new DateSpan(grid[0][0], grid[^1][^1]));
+        entries = [.. read.Entries];
+        if (read.Problem is { } problem) Notify(problem, error: true);
+    }
+
+    private async Task ShowMonth(DateOnly firstOfMonth)
+    {
+        month = firstOfMonth;
+        selected = month == ThisMonth ? Today : month;
+        CancelEdit();
+        ClearNotice();
+        await LoadAsync();
+    }
+
+    private void Select(DateOnly date)
+    {
+        if (date > Today) return; // the journal only records what was already eaten
+        selected = date;
+        CancelEdit();
+        ClearNotice();
+    }
+
+    private void StartEdit(JournalEntry item)
+    {
+        editingId = item.Id;
+        editingDate = item.EatenOn;
+        editingWasEstimate = item.CaloriesEstimated;
+        editingOriginalCalories = item.Calories;
+        form = new EntryForm { Food = item.Food, Slot = item.Slot, Calories = item.Calories };
+        ClearNotice();
+    }
+
+    private void CancelEdit() => editingId = null;
+
+    private async Task SaveEdit()
+    {
+        if (editingId is not { } id || busy) return;
+        busy = true;
+        try
+        {
+            // A number the person changed is theirs, not an estimate any more; one they left alone keeps
+            // whatever it was.
+            var estimated = editingWasEstimate && form.Calories == editingOriginalCalories;
+            var write = await Journal.UpdateAsync(id, new JournalDraft(form.Food, form.Slot, editingDate, form.Calories, estimated));
+            if (write.Problem is { } problem)
+            {
+                Notify(problem, error: true);
+                return;
+            }
+            editingId = null;
+            Notify($"Updated {write.Entry!.Food}.");
+            await LoadAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task Add()
+    {
+        if (busy) return;
+        busy = true;
+        try
+        {
+            // Typed by hand: the calories, if any, are the person's own number.
+            var write = await Journal.LogAsync(new JournalDraft(addForm.Food, addForm.Slot, selected, addForm.Calories, CaloriesEstimated: false));
+            if (write.Problem is { } problem)
+            {
+                Notify(problem, error: true);
+                return;
+            }
+            Notify($"Added {write.Entry!.Food} to {MealJournal.SlotName(write.Entry.Slot)}.");
+            addForm = new EntryForm { Slot = addForm.Slot };
+            await LoadAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task Delete(JournalEntry item)
+    {
+        if (busy) return;
+        busy = true;
+        try
+        {
+            if (!await Journal.DeleteAsync(item.Id))
+            {
+                Notify("That entry was already gone.");
+                await LoadAsync();
+                return;
+            }
+            Notify($"Removed {item.Food}.");
+            lastRemoved = item; // after Notify, which clears it — this notice is the one that offers the undo
+            await LoadAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    /// <summary>Puts a removed food back as it was — same day, meal, calories and estimate flag. The journal
+    /// keeps no activity-log entry (History is household-wide), so this is its undo.</summary>
+    private async Task UndoRemove()
+    {
+        if (lastRemoved is not { } item || busy) return;
+        busy = true;
+        try
+        {
+            var write = await Journal.LogAsync(new JournalDraft(item.Food, item.Slot, item.EatenOn, item.Calories, item.CaloriesEstimated));
+            Notify(write.Problem ?? $"Put {item.Food} back.", error: write.Problem is not null);
+            await LoadAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void Notify(string message, bool error = false)
+    {
+        notice = message;
+        noticeIsError = error;
+        lastRemoved = null;
+    }
+
+    private void ClearNotice()
+    {
+        notice = null;
+        lastRemoved = null;
+    }
+
+    private static string DayAriaLabel(DateOnly date, CalorieTotal total)
+    {
+        var label = MealJournal.Label(JournalPeriod.Day, MealJournal.SpanOf(JournalPeriod.Day, date));
+        if (date > Today) return $"{label}: not yet";
+        if (total.Items == 0) return $"{label}: nothing logged";
+        return $"{label}: {total.KcalOrUncounted}, {total.ItemsText}";
+    }
+}
