@@ -137,7 +137,7 @@ applies to any count in any doc — see `docs/remediation-plan.md` §6 on artifa
 
 The app is far beyond the spec's three pages. Current surfaces: Dashboard (`/`), Upload (`/receipt`),
 Products, Grocery List, Trends, Product Detail, Accuracy, Recipes, Receipts, Count from a photo
-(`/pantry-photo`), Cookbook, History, Reports, Meal plan, Bugs, Admin, and the public About page —
+(`/pantry-photo`), Cookbook, History, Reports, Meal plan, Meal journal (`/journal`), Bugs, Admin, and the public About page —
 the app's only page outside the auth wall.
 
 ## Where to look
@@ -148,6 +148,7 @@ the app's only page outside the auth wall.
 | Your first build; a shell, path or deploy oddity | `docs/environment.md` |
 | Anything that speaks or listens | `docs/features/voice.md`; choosing a voice, `docs/voice-bakeoff.md` |
 | Recipes, tags, substitutes, the cookbook | `docs/features/recipes.md` |
+| The meal journal, or anything per-person (`IMemberOwned`) | `docs/features/journal.md` |
 | Billing, credits, tiers, the payment seam | `docs/subscription-plan.md` |
 | The audit findings and the plan to close them | `docs/remediation-plan.md` |
 | What's still open and what's parked | `docs/backlog.md` |
