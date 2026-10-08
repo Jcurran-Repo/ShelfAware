@@ -26,6 +26,21 @@ Three constraints shape all of it:
 - A droplet: **Ubuntu 24.04 LTS**, 1 GB RAM works, 2 GB is comfortable. Root SSH.
 - A domain or subdomain whose **A record already points at the droplet** — certificate
   issuance fails without it, and the mic needs the resulting HTTPS.
+  As shipped, `deploy/Caddyfile` declares **three** addresses, and each one needs its own
+  DNS record pointing at the droplet before Caddy can get it a certificate:
+  **heyreginald.com** (the brand domain, registered 2026-09-21) and
+  **demo.shelfaware.net** (the original, kept so existing links keep working) both proxy
+  the app, and **www.heyreginald.com** redirects to the apex. Miss the `www` record and
+  that name serves a TLS error indefinitely while the other two look fine.
+  ⚠️ If the zone is on Cloudflare, those records must be **gray-cloud / DNS-only**:
+  an orange-cloud record puts Cloudflare's proxy in front, which terminates TLS itself and
+  so starves Caddy's HTTP-01 challenge. Orange cloud is correct for the family box's
+  *tunnel* (`docs/family-cloudflare.md`) and wrong here — the two boxes want opposite
+  settings, which is exactly the sort of detail that gets copied from the wrong page.
+  Every name Caddy **proxies** must also appear in `AllowedHosts` — in
+  `deploy/demo-box.env.example` for the demo box, `deploy/env.example` for a self-host one;
+  a name in one and not the other 400s at the app and reads as a broken deploy. A name Caddy
+  only **redirects**, like `www`, must not: the app never sees that Host.
 - Locally: Windows 10+ (`ssh`, `scp`, and `tar` are built in) with the .NET 10 SDK.
 
 ## First-time setup (once, on the droplet)
@@ -426,22 +441,23 @@ but `proxy_set_header Host $host` forwards whatever the client sent — and the
 password-reset email builds its link from that header, so a permissive/default Nginx
 server block turns a forged Host into a link-poisoning vector. Either make the Nginx
 `server_name` exact (no default catch-all reaching this app), or set
-`AllowedHosts=<your-domain>` in `/etc/shelfaware/env` so the app itself refuses
-foreign hosts — ideally both.
+`AllowedHosts=<your-domain>` in `/etc/shelfaware/env` (semicolon-separated if the box
+answers to several) so the app itself refuses foreign hosts — ideally both.
 
 ## Traps
 
 Each of these has cost a real deploy, or was found the night before one would have.
 
 - **`AllowedHosts` turns the loopback health check into a 400.** Once the env file pins
-  `AllowedHosts=demo.shelfaware.net`, ASP.NET's host filtering answers `400 Bad Request` to any
-  request whose `Host` header is not that name — and a bare `curl http://127.0.0.1:5000/healthz`
-  on the box sends `Host: 127.0.0.1:5000`. **The tell:** the site works in a browser, the service
-  is `active`, the journal shows nothing (the rejection happens before any logging), and the
-  loopback curl returns a 400 with an empty body. The fix is to send the name:
-  `curl -H "Host: demo.shelfaware.net" http://127.0.0.1:5000/healthz`. The deploy workflow reads
-  the name off the box's own env file for exactly this reason, and an external monitor hits the
-  public URL, which carries the right Host already.
+  `AllowedHosts=heyreginald.com;demo.shelfaware.net`, ASP.NET's host filtering answers `400 Bad
+  Request` to any request whose `Host` header is not one of those names — and a bare
+  `curl http://127.0.0.1:5000/healthz` on the box sends `Host: 127.0.0.1:5000`. **The tell:** the
+  site works in a browser, the service is `active`, the journal shows nothing (the rejection
+  happens before any logging), and the loopback curl returns a 400 with an empty body. The fix is
+  to send the name: `curl -H "Host: heyreginald.com" http://127.0.0.1:5000/healthz`. The deploy
+  workflow reads the name off the box's own env file for exactly this reason — the FIRST
+  semicolon-separated field, so whichever name leads `AllowedHosts` is the one CI health-checks.
+  An external monitor hits the public URL, which carries the right Host already.
 - **A systemd service starts with no timezone and no locale** — step 2 of the first-time setup.
   Evening purchases on tomorrow's date, prices as `¤3.99`.
 - **A tripped start limit refuses a manual start.** After five crashes in two minutes the unit is
