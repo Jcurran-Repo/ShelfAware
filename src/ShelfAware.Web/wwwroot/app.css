@@ -2356,9 +2356,12 @@ button.tag-chip {
     cursor: pointer;
     overflow: hidden;
 }
-.journalcal-day:hover:not(:disabled) { border-color: var(--accent); }
+/* The cell is a <button>, so the global button:hover fill has to be overridden, not just its border —
+   left alone it paints the cell solid accent and hides the dark day number on top of it. */
+.journalcal-day:hover:not(:disabled) { border-color: var(--accent); background: var(--surface); }
 .journalcal-day.today { border-color: var(--accent); }
-.journalcal-day.selected {
+.journalcal-day.selected,
+.journalcal-day.selected:hover:not(:disabled) {
     outline: 2px solid var(--accent);
     outline-offset: -1px;
     background: var(--surface-alt);
