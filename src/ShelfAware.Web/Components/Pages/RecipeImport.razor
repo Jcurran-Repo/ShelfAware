@@ -41,8 +41,10 @@
 
         <h2>…or paste the text</h2>
         <p class="muted">Copied from a website, a note, or a message.</p>
+        @* ⚠️ No maxlength here, unlike the typed boxes: a browser cuts an over-long PASTE silently, so the
+           cap would import a recipe missing its last steps with no word said. The handler's refusal, which
+           names the cap, is what a too-long paste should meet. *@
         <textarea class="import-paste" @bind="pastedText" @bind:event="oninput" rows="6" disabled="@importing"
-                  maxlength="@ShelfAware.Core.PromptInput.PastedRecipeMaxLength"
                   placeholder="Paste a recipe here…" aria-label="Paste recipe text"></textarea>
 
         @if (error is not null)
