@@ -60,8 +60,10 @@ public class MealJournalTests
     [Fact]
     public void An_unknown_period_is_refused_rather_than_guessed()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => MealJournal.SpanOf((JournalPeriod)9, Thursday));
-        Assert.Throws<ArgumentOutOfRangeException>(() => MealJournal.Label((JournalPeriod)9, new(Thursday, Thursday)));
+        var span = Assert.Throws<ArgumentOutOfRangeException>(() => MealJournal.SpanOf((JournalPeriod)9, Thursday));
+        var label = Assert.Throws<ArgumentOutOfRangeException>(() => MealJournal.Label((JournalPeriod)9, new(Thursday, Thursday)));
+        Assert.StartsWith("Not a journal period.", span.Message);
+        Assert.StartsWith("Not a journal period.", label.Message);
     }
 
     [Fact]
@@ -98,6 +100,8 @@ public class MealJournalTests
     {
         Assert.True(MealJournal.Total([E(Thursday, 400), E(Thursday, 250, estimated: true)]).Estimated);
         Assert.True(MealJournal.Total([E(Thursday, 250, estimated: true), E(Thursday, 400)]).Estimated);
+        // Two estimates are still an estimate — the flag accumulates, it doesn't toggle.
+        Assert.True(MealJournal.Total([E(Thursday, 250, estimated: true), E(Thursday, 400, estimated: true)]).Estimated);
     }
 
     [Fact]
