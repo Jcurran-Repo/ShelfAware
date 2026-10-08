@@ -31,14 +31,16 @@ public static class TagVocabulary
     public const int MaxCanonicalExpansion = 4;
 
     /// <summary>How many vocabulary entries an advisor prompt may carry — the bound on the one input to a
-    /// charged call that the household controls the SIZE of. ⚠️ A plain <c>Take</c> would be the wrong
-    /// bound: it keeps whichever tags happen to sort first and silently degrades the synonym check for
-    /// exactly the households with the most tags. <see cref="NearestForPrompt(string, IEnumerable{string})"/> keeps the entries
-    /// closest to what is being asked about instead, so the tag the model should match is in the prompt
-    /// whenever the cheap matcher can see that it is close. 40 is past every real vocabulary (the two
-    /// seed lists are 19 and 27) and, at 64 characters a tag, bounds the vocabulary's share of a prompt
-    /// to a few hundred tokens.</summary>
-    public const int PromptVocabularyLimit = 40;
+    /// charged call that the household controls the SIZE of. ⚠️ Set far past any real vocabulary (the two
+    /// seed lists are 19 and 27) on purpose, because nearness by SPELLING is not nearness by meaning: the
+    /// advisor exists for the synonyms the cheap matcher cannot see ("Soda" / "Soft Drink" share almost no
+    /// letters, and by edit distance "soda" sits nearer "deli" than "soft drink"), so any trim drops
+    /// exactly the tags it was asked to find. The bound is for a pathological vocabulary, not a working
+    /// one: at 64 characters a tag, 200 entries cap the vocabulary's share of a prompt at a few thousand
+    /// tokens. When it does bite, <see cref="NearestForPrompt(string, IEnumerable{string})"/> keeps the
+    /// spelling neighbours rather than whichever tags sort first — a <c>Take</c> would lose even
+    /// those.</summary>
+    public const int PromptVocabularyLimit = 200;
 
     /// <summary>Whether this text is too long to be a tag — THE one place that question is answered, and
     /// the only place <see cref="MaxLength"/> may be compared against (held by <c>TagLengthSiteTests</c>).
@@ -139,7 +141,7 @@ public static class TagVocabulary
         }
         // One-edit typo or a trailing-letter slip on an otherwise-identical tag.
         foreach (var (tag, other) in keys)
-            if (EditDistance(key, other) <= 1) return tag;
+            if (Math.Abs(key.Length - other.Length) <= 1 && EditDistance(key, other) <= 1) return tag;
         return null;
     }
 
@@ -151,8 +153,8 @@ public static class TagVocabulary
     /// which tags are near (its one-edit neighbours are exactly the entries at distance one here). An
     /// entry's distance to several probes is its distance to the nearest of them, so the recipe advisor
     /// can rank its vocabulary against a recipe's name and every ingredient at once.
-    /// <para>Ties keep their input order, so a vocabulary under the limit comes back whole and in a
-    /// stable order, and entries past the tag cap are left out for the same reason and at the same
+    /// <para>Ties keep their input order, so a vocabulary under the limit comes back whole, nearest first
+    /// and otherwise in the caller's order; entries past the tag cap are left out for the same reason and at the same
     /// predicate as <see cref="FindNearDuplicate"/> skips them. A probe longer than a tag could be is
     /// read to the cap rather than skipped — a recipe's name is a probe, and its first sixty-four
     /// characters are most of its signal — which also bounds the key's cost on a probe nobody capped.</para>

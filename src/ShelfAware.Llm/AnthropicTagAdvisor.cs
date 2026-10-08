@@ -37,13 +37,12 @@ public class AnthropicTagAdvisor : ITagAdvisor
         // amplifier on a box that pays for its own tokens. A guard on the screen alone is one edit away
         // from being gone; this one no caller can reopen.
         if (TagVocabulary.IsOverLength(candidate)) return null;
-        // ⚠️ The COUNT is bounded as well as each entry's length, and bounded by nearness rather than by
-        // position. This line used to interpolate every tag the household had, so a vocabulary of N tags
-        // sent N × 64 bytes on every charged call, unbounded in N — self-inflicted and behind the credit
-        // gate, but the one input to this call whose size the household controls. A plain Take would
-        // have kept whichever tags sorted first and quietly degraded the synonym check for exactly the
-        // households with the most tags; the vocabulary's own ranking keeps the entries the cheap matcher
-        // can see are close, which is where a synonym's spelling usually is. Entries past the tag cap are
+        // ⚠️ The COUNT is bounded as well as each entry's length. This line used to interpolate every tag
+        // the household had, so a vocabulary of N tags sent N × 64 bytes on every charged call, unbounded
+        // in N — self-inflicted and behind the credit gate, but the one input to this call whose size the
+        // household controls. The bound sits far past any real vocabulary, because a synonym's spelling
+        // is usually NOT near (see TagVocabulary.PromptVocabularyLimit); only a pathological vocabulary is
+        // trimmed, and then by nearness rather than by position. Entries past the tag cap are
         // left out there too, at the same predicate every other site asks — this line once carried its
         // own copy of that arithmetic, untrimmed, the one copy that was different.
         var sent = TagVocabulary.NearestForPrompt(candidate, existing);

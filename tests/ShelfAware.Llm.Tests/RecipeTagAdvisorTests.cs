@@ -78,7 +78,7 @@ public class RecipeTagAdvisorTests
         var listed = line[(line.IndexOf(':') + 1)..].TrimEnd('.').Split(',', StringSplitOptions.TrimEntries);
         Assert.Equal(TagVocabulary.PromptVocabularyLimit, listed.Length);
         Assert.Equal("Pasta", listed[0]);
-        Assert.DoesNotContain("Filler 49", listed);
+        Assert.DoesNotContain($"Filler {TagVocabulary.PromptVocabularyLimit + 9:00}", listed); // the last-listed filler
     }
 
     [Fact]

@@ -200,7 +200,7 @@ public class TagAdvisorTests
         var listed = prompt.Split('\n').Where(l => l.StartsWith("- ", StringComparison.Ordinal)).ToList();
         Assert.Equal(TagVocabulary.PromptVocabularyLimit, listed.Count);
         Assert.Contains("- Sodium", listed);
-        Assert.DoesNotContain("- Filler 49", listed);
+        Assert.DoesNotContain($"- Filler {TagVocabulary.PromptVocabularyLimit + 9:00}", listed); // the last-listed filler
     }
 
     [Fact]
