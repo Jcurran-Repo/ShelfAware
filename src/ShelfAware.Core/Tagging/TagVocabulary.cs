@@ -302,12 +302,16 @@ public static class TagVocabulary
     // no other letters to object, and folds — it reads as the Latin word to anyone looking at it.
     private static string Skeleton(string s)
     {
+        // Stryker disable once Boolean: `false` → `true` is unobservable — `mixed` only decides whether to
+        // copy the string through the table, and a pass over text with no confusable maps every char to itself.
         var mixed = false;
         foreach (var c in s)
         {
             if (Confusables.ContainsKey(c)) mixed = true;
             else if (char.IsLetter(c) && !IsLatinBlock(c)) return s;
         }
+        // Stryker disable once Conditional: forcing the copy is unobservable for the same reason — skipping
+        // it is an allocation saved, not a different answer.
         return mixed
             ? string.Create(s.Length, s, static (span, source) =>
             {

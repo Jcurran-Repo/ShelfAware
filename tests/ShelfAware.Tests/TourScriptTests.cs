@@ -230,4 +230,18 @@ public class TourScriptDeafBoxTests
         Assert.Contains("Type it the way", TourScript.Steps[1].BodyFor(managed: false, canHear: false), StringComparison.Ordinal);
         Assert.Contains("read out loud", TourScript.Steps[4].BodyFor(managed: false, canHear: false), StringComparison.Ordinal);
     }
+
+    // Every piece of each deaf variant, pinned: a variant whose title or a sentence went blank would still
+    // pass the "never promised a microphone" rule — saying nothing promises nothing.
+    [Theory]
+    [InlineData(1, "Just tell it", "One line can carry several updates at once.")]
+    [InlineData(4, "Cook what you have", "Recipes marked by what's actually on your shelves.")]
+    [InlineData(10, "Your key, your data", "works without an API key. Adding your own")]
+    [InlineData(10, "Your key, your data", "switches on receipt reading and recipe ideas.")]
+    [InlineData(10, "Your key, your data", "export or delete everything from this page")]
+    public void Each_deaf_variant_reads_in_full(int step, string title, string phrase)
+    {
+        Assert.Equal(title, TourScript.Steps[step].TitleFor(managed: false, canHear: false));
+        Assert.Contains(phrase, TourScript.Steps[step].BodyFor(managed: false, canHear: false), StringComparison.Ordinal);
+    }
 }
