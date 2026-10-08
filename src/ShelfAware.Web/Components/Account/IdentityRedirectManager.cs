@@ -56,9 +56,13 @@ public sealed class IdentityRedirectManager(NavigationManager navigationManager)
         {
             // An absolute URL — including "javascript:", "mailto:", and any other scheme — is followed only
             // when it is this site, and then as the base-relative path NavigateTo expects.
+            // ⚠️ The remainder goes back through this same reading, because NavigateTo resolves it against
+            // the base: "https://this.site///evil.example" leaves "//evil.example" (Uri turns backslashes into
+            // slashes first, so those reach the same shape), and "https://this.site/https://evil.example"
+            // leaves an absolute foreign URL. Each pass strips the base, so the recursion is bounded.
             var target = absolute.AbsoluteUri;
             return target.StartsWith(baseUri, StringComparison.OrdinalIgnoreCase)
-                ? target[baseUri.Length..]
+                ? SafeTarget(target[baseUri.Length..], baseUri)
                 : "";
         }
 

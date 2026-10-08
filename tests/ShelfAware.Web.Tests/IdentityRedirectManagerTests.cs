@@ -32,6 +32,18 @@ public class IdentityRedirectManagerTests
     public void An_absolute_target_that_is_not_this_site_goes_to_the_root(string foreign) =>
         Assert.Equal("", IdentityRedirectManager.SafeTarget(foreign, Base));
 
+    [Theory]
+    [InlineData("https://demo.shelfaware.net///evil.example")]
+    [InlineData(@"https://demo.shelfaware.net//\evil.example")] // backslashes become slashes first
+    [InlineData("https://demo.shelfaware.net/https://evil.example/")]
+    [InlineData("https://demo.shelfaware.net/https://demo.shelfaware.net///evil.example")]
+    public void A_target_under_the_base_cannot_smuggle_another_site_in_its_remainder(string tampered)
+    {
+        // Stripping the base from these leaves "//evil.example" or "https://evil.example/", which
+        // NavigateTo would resolve off the site — the remainder is judged by the same rule as the whole.
+        Assert.Equal("", IdentityRedirectManager.SafeTarget(tampered, Base));
+    }
+
     [Fact]
     public void An_absolute_target_under_the_base_becomes_base_relative()
     {
