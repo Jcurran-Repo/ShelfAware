@@ -28,4 +28,32 @@ public sealed class HouseholdDbFactoryTests : IDisposable
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => factory.CreateDbContextAsync());
     }
+
+    private sealed class FixedMember(string? id) : ICurrentMember
+    {
+        public ValueTask<string?> GetMemberIdAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult(id);
+        public void UseFixedMember(string memberId) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task The_context_carries_the_person_for_the_per_member_tables()
+    {
+        var factory = new HouseholdDbFactory(_db, new FakeCurrentHousehold("hh-resolved"), new FixedMember("member-1"));
+
+        await using var db = await factory.CreateDbContextAsync();
+
+        Assert.Equal("member-1", db.MemberId);
+    }
+
+    [Fact]
+    public async Task No_person_still_gives_a_household_context_that_knows_nobody()
+    {
+        // The household tables work as ever; only the journal is out of reach (it reads nothing, writes nothing).
+        var factory = new HouseholdDbFactory(_db, new FakeCurrentHousehold("hh-resolved"), new FixedMember(null));
+
+        await using var db = await factory.CreateDbContextAsync();
+
+        Assert.Equal("hh-resolved", db.HouseholdId);
+        Assert.Null(db.MemberId);
+    }
 }

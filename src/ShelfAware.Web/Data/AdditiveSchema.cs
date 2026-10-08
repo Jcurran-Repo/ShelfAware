@@ -150,6 +150,10 @@ public static class AdditiveSchema
         // which is the one date that is NOT an upload.
         if (EnsureColumn(db, table: "Receipts", column: "UploadedAt", definition: "TEXT NULL"))
             Execute(db, "UPDATE Receipts SET UploadedAt = ConfirmedAt WHERE ConfirmedAt IS NOT NULL;");
+
+        // 2026-10-08: the meal journal — what each PERSON ate, per meal, with calories. The first per-member
+        // table (IMemberOwned). A brand-new table is invisible to existing rows.
+        EnsureTable(db, table: "JournalEntries");
     }
 
     public static void Apply(AuthDbContext db)

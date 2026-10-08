@@ -12,6 +12,7 @@
 @using ShelfAware.Web.Auth
 @using ShelfAware.Web.Data
 @inject ICurrentHousehold Household
+@inject ICurrentMember Member
 
 @code {
     [CascadingParameter]
@@ -25,6 +26,10 @@
         if (!string.IsNullOrEmpty(householdId))
         {
             Household.UseFixed(householdId);
+            // The person too, from the same principal: the voice agent logs meals from its detached loop,
+            // and a household pin alone deliberately names nobody (CurrentHousehold.GetMemberIdAsync).
+            if (user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value is { Length: > 0 } memberId)
+                Member.UseFixedMember(memberId);
         }
     }
 
