@@ -46,6 +46,9 @@ public sealed class IdentityRedirectManager(NavigationManager navigationManager)
         uri = uri.Trim();
 
         if (IsProtocolRelative(uri)) return "";
+        // A browser deletes tabs and newlines from a URL before reading it, so "/\t/evil.example" is
+        // "//evil.example" by the time it is followed. No real ReturnUrl carries a control character.
+        if (uri.Any(char.IsControl)) return "";
 
         // Rooted path ("/products?tag=x"): the only kind a ReturnUrl is meant to carry. The two
         // protocol-relative shapes were refused above, so what's left stays on this host.

@@ -21,6 +21,8 @@ public class IdentityRedirectManagerTests
     [InlineData(@"\\evil.example")]
     [InlineData(@"\/evil.example")]
     [InlineData("  //evil.example")] // leading whitespace must not disguise it
+    [InlineData("/\t/evil.example")] // browsers strip tabs and newlines inside a URL...
+    [InlineData("/\n/evil.example")] // ...so these are "//evil.example" once followed
     public void A_protocol_relative_target_goes_to_the_root(string tampered) =>
         Assert.Equal("", IdentityRedirectManager.SafeTarget(tampered, Base));
 
