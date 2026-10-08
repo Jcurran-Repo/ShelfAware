@@ -138,8 +138,8 @@ public static class SpeechRegistration
     /// <summary>Each household's speech-cache budget in bytes, from the ONE reading of
     /// <c>Speech:CacheMegabytes</c> (default 256; zero or less means no cache at all). It is the number
     /// the after-write trim keeps a household under, and the number the startup sweep in Program.cs
-    /// should take from here too: two readings of the same key is how a box ends up trimming to one cap
-    /// at boot and a different one an hour later.</summary>
+    /// takes from here too: two readings of the same key is how a box ends up trimming to one cap at
+    /// boot and a different one an hour later.</summary>
     public static long CacheBudgetBytesOf(IConfiguration configuration) =>
         (configuration.GetValue<int?>("Speech:CacheMegabytes") ?? 256) * 1024L * 1024L;
 

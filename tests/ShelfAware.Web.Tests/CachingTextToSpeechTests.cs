@@ -380,6 +380,23 @@ public sealed class CachingTextToSpeechTests : IDisposable
     }
 
     [Fact]
+    public async Task An_after_write_trim_leaves_headroom_so_the_next_clip_does_not_start_another()
+    {
+        // Nine 100-byte clips against a cap of 1000, then a 150-byte write: 1050. A sweep to the cap stops
+        // at 950, one clip from crossing again — every later synthesis would start a full scan and sort to
+        // delete one file. The sweep stops under nine-tenths of the cap (900) instead: two clips go.
+        for (var i = 0; i < 9; i++) Planted($"clip-{i}", 100, ageHours: 20 - i);
+        var budget = new SpeechCacheBudget(maxBytesPerHousehold: 1000);
+
+        await Cache(new FakeTts(clipBytes: 150), budget: budget).SynthesizeAsync("Step 1. Sear the chicken.");
+        await budget.WhenIdleAsync();
+
+        Assert.Equal(900, CachingTextToSpeech.AfterWriteTrimTarget(1000));
+        Assert.Equal(8, Directory.GetFiles(Drawer(), "*.audio").Length);
+        Assert.Equal(850, budget.BytesHeldBy("household-a"));
+    }
+
+    [Fact]
     public async Task A_write_under_budget_is_an_add_and_a_compare_not_a_scan()
     {
         // The first write after boot measures the drawer — the ONE scan a household pays. After it, a

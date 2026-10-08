@@ -248,6 +248,12 @@ public sealed class CachingTextToSpeech : ITextToSpeech, ISpeechCache
         }
     }
 
+    /// <summary>Where an after-write trim stops: nine-tenths of the budget, not the budget itself. A sweep
+    /// to exactly the cap leaves a household one clip from crossing it again, so at steady state every
+    /// synthesis would start a full scan and sort of the drawer to delete one file; the headroom spaces
+    /// trims out to one per tenth of the budget written. The startup sweep still trims to the cap.</summary>
+    internal static long AfterWriteTrimTarget(long maxBytesPerHousehold) => maxBytesPerHousehold / 10 * 9;
+
     /// <summary>The detached half of <see cref="Charge"/>: the same oldest-first sweep the startup trim
     /// runs (<see cref="TrimFolder"/>), over one household's drawer, followed by setting the ledger to
     /// what the sweep found on disk. Nothing here can reach the request that caused it — it has its own
@@ -261,7 +267,7 @@ public sealed class CachingTextToSpeech : ITextToSpeech, ISpeechCache
             _logger.LogDebug(
                 "The speech cache at {Directory} is over budget after a write ({Bytes} > {Max} byte(s)); trimming it.",
                 directory, snapshot, _budget.MaxBytesPerHousehold);
-            remaining = TrimFolder(directory, _budget.MaxBytesPerHousehold, SearchOption.AllDirectories, _logger)?.Remaining;
+            remaining = TrimFolder(directory, AfterWriteTrimTarget(_budget.MaxBytesPerHousehold), SearchOption.AllDirectories, _logger)?.Remaining;
         }
         catch (Exception ex)
         {
