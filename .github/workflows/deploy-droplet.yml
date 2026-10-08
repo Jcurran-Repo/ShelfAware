@@ -87,6 +87,9 @@ jobs:
       # No run at all is a refusal too: CI runs on pull requests and on pushes to master, so a branch
       # with no PR has never been tested — open one, or wait for its check.
       #
+      # Only a run posted by GitHub Actions counts — any app can post a check run with this name. (A branch
+      # can still rename one of its own Actions jobs to it; the environment approval is what bounds that.)
+      #
       # ⚠️ The commit asked about is the one whose CODE was tested, which is not always $SHA. ci.yml and
       # mutation.yml commit the test-status snapshot back to master with GITHUB_TOKEN, and a push made with
       # that token starts no workflow — so the moment those pushes are allowed, master's head is a
@@ -105,7 +108,9 @@ jobs:
           for _ in $(seq 1 20); do
             # A merge or a root commit is never stepped over: only a plain snapshot-only commit is.
             [ "$(git rev-list --parents -n 1 "$tested" | wc -w)" -eq 2 ] || break
-            [ "$(git diff --name-only "$tested^" "$tested")" = "$snapshot" ] || break
+            # Exactly one change, and it is a MODIFICATION of the snapshot: --no-renames, or a commit that
+            # renamed some other file onto that path would print only the new name and be stepped over.
+            [ "$(git diff --no-renames --name-status "$tested^" "$tested")" = "$(printf 'M\t%s' "$snapshot")" ] || break
             tested=$(git rev-parse "$tested^")
           done
           if [ "$tested" != "$SHA" ]; then
@@ -114,7 +119,7 @@ jobs:
           # "none" when the commit has no such check run; "pending:<status>" while one is still running
           # (its conclusion is null until it finishes); otherwise the conclusion itself.
           conclusion=$(gh api "repos/$REPO/commits/$tested/check-runs?check_name=Build%20%26%20test&per_page=100" \
-            --jq '[.check_runs[] | select(.name == "Build & test")] | first
+            --jq '[.check_runs[] | select(.name == "Build & test" and .app.slug == "github-actions")] | first
                   | if . == null then "none" else (.conclusion // ("pending:" + .status)) end')
           case "$conclusion" in
             success)
