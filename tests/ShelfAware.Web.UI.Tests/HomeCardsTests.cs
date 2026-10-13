@@ -474,7 +474,7 @@ public class HomeCardsTests : PageTestContext
     public void Coming_up_items_are_the_same_cards_as_running_low_without_the_buy_buttons()
     {
         // Jordan's ask: Coming up should read as a continuation of the Running Low list. So it renders
-        // the SAME card body (one CardBody, not a copy that can drift) — name, copy, status chip and
+        // the SAME DashboardCard (one component, not a copy that can drift) — name, copy, status chip and
         // urgency — on a Stocked accent, and leaves off the buy/restock actions: nothing here is low yet.
         Seed("Chicken Breast", p => p.Purchases =
         [

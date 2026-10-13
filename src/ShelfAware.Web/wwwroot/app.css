@@ -812,7 +812,7 @@ input:focus, select:focus {
     margin-top: 0.25rem;
 }
 
-/* ---- Dashboard: running-low cards ---- */
+/* ---- Dashboard: the Running Low and Coming up cards ---- */
 .cards {
     list-style: none;
     padding: 0;
@@ -843,7 +843,6 @@ input:focus, select:focus {
    boxed in a panel of their own. A plain heading + lede in place of the panel's chrome, pulled close
    to the cards so it reads as a divider within one list, not the start of a separate widget. */
 .cards-heading {
-    font-size: 1.1rem;
     margin: 1.4rem 0 0.15rem;
 }
 .cards-lede {

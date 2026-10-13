@@ -3,7 +3,6 @@
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Settings
-@using ShelfAware.Core.Shopping
 @using ShelfAware.Web.Undo
 @inject IHouseholdDbFactory DbFactory
 @inject IAppSettings SettingsStore
@@ -92,9 +91,8 @@ else
         <ul class="cards running-low">
             @foreach (var p in runningLow)
             {
-                var r = predictions[p.Id];
-                <li class="card accent-@PredictionDisplay.ChipClass(r.Status)">
-                    @CardBody(p, r)
+                <DashboardCard Product="p" Result="predictions[p.Id]" Urgency="@Urgency(predictions[p.Id])"
+                               CopyNote="@CopyNoteFor(p)" OnCopy="() => CopyName(p)">
                     <div class="card-actions">
                         <SplitButton PrimaryLabel="Bought today" OnPrimary="() => BoughtToday(p)"
                                      PrimaryAriaLabel="@($"Mark {p.Name} bought today")" Disabled="actionBusy">
@@ -105,7 +103,7 @@ else
                             <button class="secondary" @onclick="() => StillInStock(p)" disabled="@actionBusy" aria-label="Mark @p.Name still in stock">Still in stock</button>
                         </SplitButton>
                     </div>
-                </li>
+                </DashboardCard>
             }
         </ul>
     }
@@ -125,10 +123,8 @@ else
             <ul class="cards">
                 @foreach (var p in comingUp)
                 {
-                    var r = predictions[p.Id];
-                    <li class="card accent-@PredictionDisplay.ChipClass(r.Status)">
-                        @CardBody(p, r)
-                    </li>
+                    <DashboardCard Product="p" Result="predictions[p.Id]" Urgency="@Urgency(predictions[p.Id])"
+                                   CopyNote="@CopyNoteFor(p)" OnCopy="() => CopyName(p)" />
                 }
             </ul>
         </section>
@@ -400,59 +396,8 @@ else
         catch (JSException ex) { Logger.LogDebug(ex, "Couldn't focus the dashboard heading after a dismissal."); }
     }
 
-    // One card body for every dashboard card list — Running Low and Coming up this week — so the two
-    // can't drift apart: name + copy, status chip, size/brand hints, urgency, notes and the basis line.
-    // Each list adds only its own <li> wrapper (and, for Running Low, the action buttons).
-    private RenderFragment CardBody(Product p, PredictionResult r) =>
-        @<div class="card-body">
-            <div class="card-top">
-                <a class="card-name" href="/product/@p.Id">@p.Name</a>
-                <button type="button" class="icon-btn copy-name" @onclick="() => CopyName(p)"
-                        title="Copy name" aria-label="Copy @p.Name to the clipboard">📋</button>
-                @if (copyNote is { } cn && cn.ProductId == p.Id)
-                {
-                    <span class="muted copy-note">@cn.Text</span>
-                }
-                <span class="chip chip-@PredictionDisplay.ChipClass(r.Status)">@PredictionDisplay.Label(r.Status)</span>
-            </div>
-            @{
-                var size = SizeFormat.Normalize(r.RecommendedSize);
-                var brand = ShoppingEstimator.UsualBrandOf(p.Purchases);
-                var variety = ShoppingEstimator.UsualVarietyOf(p.Purchases);
-            }
-            @if (size is { Length: > 0 } || brand is not null || variety is not null)
-            {
-                <div class="item-meta">
-                    @if (size is { Length: > 0 } sz)
-                    {
-                        <span class="size-chip" title="Suggested size to buy">@sz</span>
-                    }
-                    <BrandVarietyHint UsualBrand="@brand" UsualVariety="@variety"
-                                      Brands="@ShoppingEstimator.BrandsBoughtOf(p.Purchases)"
-                                      Varieties="@ShoppingEstimator.VarietiesBoughtOf(p.Purchases)" />
-                </div>
-            }
-            @{
-                var urgency = Urgency(r);
-            }
-            @if (urgency.Length > 0)
-            {
-                <div class="card-urgency">@urgency</div>
-            }
-            @if (r.SignalNote is not null)
-            {
-                <div class="card-note">@if (r.Pinned) { <span aria-hidden="true">📌 </span> }@r.SignalNote</div>
-            }
-            @if (r.Expired && r.ExpiresOn is { } expiredOn)
-            {
-                @* The honest reason this card is red: the label, not the cadence — the user
-                   can see the jug in the fridge, so the card must say WHY it counts as out. *@
-                <div class="card-note"><span aria-hidden="true">🏷️ </span>Expired @expiredOn.ToString("MMM d")</div>
-            }
-            <div class="card-basis muted">@r.Basis</div>
-        </div>;
-
     private (int ProductId, string Text)? copyNote; // one note at a time, tied to the card it is about
+    private string? CopyNoteFor(Product p) => copyNote is { } cn && cn.ProductId == p.Id ? cn.Text : null;
     private string? copyAnnouncement; // feeds the persistent live region beside the cards
 
     // Copies the bare item name — what pastes usefully into a store search; the brand/size hints

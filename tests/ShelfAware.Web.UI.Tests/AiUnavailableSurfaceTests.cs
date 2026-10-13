@@ -41,9 +41,9 @@ public class AiUnavailableSurfaceTests : PageTestContext
         cut.Find("form").Submit();
 
         cut.WaitForAssertion(() =>
-            Assert.Equal(AiErrorText.OutOfCredits, cut.Find("[role=status] p").TextContent.Trim()));
+            Assert.Equal(AiErrorText.OutOfCredits, cut.Find(".quick-update [role=status] p").TextContent.Trim()));
         // It's an error, not a hint or a reply — and, the mutation-killer, the model was never asked.
-        Assert.Contains("error", cut.Find("[role=status] p").GetAttribute("class"));
+        Assert.Contains("error", cut.Find(".quick-update [role=status] p").GetAttribute("class"));
         Assert.Empty(Chat.Asked);
     }
 
