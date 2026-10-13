@@ -1,0 +1,73 @@
+@using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Shopping
+@* One dashboard card. Running Low and Coming up this week both render it, so the two lists can't drift
+   apart: the status-accented row, name + copy, chip, size/brand hints, urgency, notes and the basis line.
+   Everything it says comes from the one PredictionResult the page computed (CLAUDE.md, "one prediction,
+   one story"); the urgency phrase is passed in rather than re-derived, because "how many days from
+   today" belongs to the page's own clock. Only the actions differ between the lists, so they ride in
+   as ChildContent — Running Low passes its buy/restock buttons, Coming up passes none. *@
+<li class="card accent-@PredictionDisplay.ChipClass(Result.Status)">
+    <div class="card-body">
+        <div class="card-top">
+            <a class="card-name" href="/product/@Product.Id">@Product.Name</a>
+            <button type="button" class="icon-btn copy-name" @onclick="OnCopy"
+                    title="Copy name" aria-label="Copy @Product.Name to the clipboard">📋</button>
+            @if (CopyNote is { } note)
+            {
+                <span class="muted copy-note">@note</span>
+            }
+            <span class="chip chip-@PredictionDisplay.ChipClass(Result.Status)">@PredictionDisplay.Label(Result.Status)</span>
+        </div>
+        @{
+            var size = SizeFormat.Normalize(Result.RecommendedSize);
+            var brand = ShoppingEstimator.UsualBrandOf(Product.Purchases);
+            var variety = ShoppingEstimator.UsualVarietyOf(Product.Purchases);
+        }
+        @if (size is { Length: > 0 } || brand is not null || variety is not null)
+        {
+            <div class="item-meta">
+                @if (size is { Length: > 0 } sz)
+                {
+                    <span class="size-chip" title="Suggested size to buy">@sz</span>
+                }
+                <BrandVarietyHint UsualBrand="@brand" UsualVariety="@variety"
+                                  Brands="@ShoppingEstimator.BrandsBoughtOf(Product.Purchases)"
+                                  Varieties="@ShoppingEstimator.VarietiesBoughtOf(Product.Purchases)" />
+            </div>
+        }
+        @if (Urgency.Length > 0)
+        {
+            <div class="card-urgency">@Urgency</div>
+        }
+        @if (Result.SignalNote is not null)
+        {
+            <div class="card-note">@if (Result.Pinned) { <span aria-hidden="true">📌 </span> }@Result.SignalNote</div>
+        }
+        @if (Result.Expired && Result.ExpiresOn is { } expiredOn)
+        {
+            @* The honest reason this card is red: the label, not the cadence — the user
+               can see the jug in the fridge, so the card must say WHY it counts as out. *@
+            <div class="card-note"><span aria-hidden="true">🏷️ </span>Expired @expiredOn.ToString("MMM d")</div>
+        }
+        <div class="card-basis muted">@Result.Basis</div>
+    </div>
+    @ChildContent
+</li>
+
+@code {
+    [Parameter, EditorRequired] public Product Product { get; set; } = default!;
+
+    /// <summary>The page's prediction for <see cref="Product"/>: the same result its due date came from.</summary>
+    [Parameter, EditorRequired] public PredictionResult Result { get; set; } = default!;
+
+    /// <summary>"Due in 4 days" / "3 days overdue", resolved against the page's today; blank hides the line.</summary>
+    [Parameter] public string Urgency { get; set; } = "";
+
+    /// <summary>The copy button's outcome ("Copied" / "Couldn't copy") when this card is the one copied.</summary>
+    [Parameter] public string? CopyNote { get; set; }
+
+    [Parameter] public EventCallback OnCopy { get; set; }
+
+    /// <summary>The card's actions, if its list has any.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}
