@@ -39,9 +39,9 @@ public class HomeQuickUpdateTests : PageTestContext
         cut.Find("form").Submit();
 
         cut.WaitForAssertion(() =>
-            Assert.Contains("Say what you bought or ran low on first", cut.Find("[role=status]").TextContent));
+            Assert.Contains("Say what you bought or ran low on first", cut.Find(".quick-update [role=status]").TextContent));
         // The hint is guidance, not an error — and the model was never asked.
-        Assert.Contains("chat-reply", cut.Find("[role=status] p").GetAttribute("class"));
+        Assert.Contains("chat-reply", cut.Find(".quick-update [role=status] p").GetAttribute("class"));
         Assert.Empty(Chat.Asked);
     }
 
@@ -84,8 +84,8 @@ public class HomeQuickUpdateTests : PageTestContext
         cut.Find("form").Submit();
 
         cut.WaitForAssertion(() =>
-            Assert.Contains("Noted — coffee marked out.", cut.Find("[role=status]").TextContent));
-        Assert.Contains("chat-reply", cut.Find("[role=status] p").GetAttribute("class"));
+            Assert.Contains("Noted — coffee marked out.", cut.Find(".quick-update [role=status]").TextContent));
+        Assert.Contains("chat-reply", cut.Find(".quick-update [role=status] p").GetAttribute("class"));
         // The box clears only on success, ready for the next update.
         Assert.Equal("", cut.Find("form input").GetAttribute("value") ?? "");
     }
@@ -100,8 +100,8 @@ public class HomeQuickUpdateTests : PageTestContext
         cut.Find("form").Submit();
 
         cut.WaitForAssertion(() =>
-            Assert.Contains("I couldn't find that product.", cut.Find("[role=status]").TextContent));
-        Assert.Contains("error", cut.Find("[role=status] p").GetAttribute("class"));
+            Assert.Contains("I couldn't find that product.", cut.Find(".quick-update [role=status]").TextContent));
+        Assert.Contains("error", cut.Find(".quick-update [role=status] p").GetAttribute("class"));
         // The text stays for a correction — clearing it would make the user retype everything.
         Assert.Equal("we're out of flurbium", cut.Find("form input").GetAttribute("value"));
     }

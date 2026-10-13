@@ -79,11 +79,11 @@ public class HomeCardsTests : PageTestContext
 
         cut.WaitForAssertion(() =>
         {
-            var names = cut.FindAll(".cards .card-name").Select(a => a.TextContent.Trim()).ToList();
+            var names = cut.FindAll(".running-low .card-name").Select(a => a.TextContent.Trim()).ToList();
             Assert.Equal(["Said Out Loud", "Rhythm Overdue", "Due Soonish"], names);
         });
         // The pinned card carries the human's own statement, marked as a pin.
-        var pinned = cut.FindAll(".cards li").First();
+        var pinned = cut.FindAll(".running-low li").First();
         Assert.Contains("📌", pinned.TextContent);
     }
 
@@ -137,11 +137,11 @@ public class HomeCardsTests : PageTestContext
             new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
         ]);
         var cut = RenderHome();
-        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
 
-        cut.FindAll(".cards button").Single(b => b.TextContent.Trim() == "Bought today").Click();
+        cut.FindAll(".running-low button").Single(b => b.TextContent.Trim() == "Bought today").Click();
 
-        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".cards li"))); // fresh stock, no nag
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".running-low li"))); // fresh stock, no nag
 
         await using var raw = Db.CreateUnscopedContext();
         var purchases = await raw.PurchaseEvents.IgnoreQueryFilters()
@@ -163,15 +163,15 @@ public class HomeCardsTests : PageTestContext
             new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
         ]);
         var cut = RenderHome();
-        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
 
         // Restocked is the split button's alternate action — behind the caret, deliberately less
         // prominent than the primary "Bought today".
-        cut.Find(".cards .split-caret").Click();
+        cut.Find(".running-low .split-caret").Click();
         cut.WaitForState(() => cut.FindAll(".split-menu").Count == 1);
         cut.FindAll(".split-menu button").Single(b => b.TextContent.Trim() == "Restocked").Click();
 
-        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".cards li")));
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".running-low li")));
 
         // The §6 two-stream rule, seen from the dashboard: a restock is status-only — it clears
         // the nag but must never count as a buy, or casual taps would corrupt the cadence.
@@ -192,16 +192,16 @@ public class HomeCardsTests : PageTestContext
             new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
         ]);
         var cut = RenderHome();
-        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
 
         // "Still in stock" is the split button's SECOND alternate action, beneath Restocked.
-        cut.Find(".cards .split-caret").Click();
+        cut.Find(".running-low .split-caret").Click();
         cut.WaitForState(() => cut.FindAll(".split-menu").Count == 1);
         cut.FindAll(".split-menu button").Single(b => b.TextContent.Trim() == "Still in stock").Click();
 
         cut.WaitForAssertion(() =>
             Assert.Contains("Marked Whole Milk still in stock", cut.Find(".inline-confirm").TextContent));
-        Assert.Empty(cut.FindAll(".cards li")); // snoozed off Running Low
+        Assert.Empty(cut.FindAll(".running-low li")); // snoozed off Running Low
 
         // Status-only: a StillInStock signal, NOT a purchase — it must never feed the cadence.
         await using var raw = Db.CreateUnscopedContext();
@@ -219,9 +219,9 @@ public class HomeCardsTests : PageTestContext
             new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
         ]);
         var cut = RenderHome();
-        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
 
-        cut.FindAll(".cards button").Single(b => b.TextContent.Trim() == "Bought today").Click();
+        cut.FindAll(".running-low button").Single(b => b.TextContent.Trim() == "Bought today").Click();
         cut.WaitForAssertion(() =>
             Assert.Contains("Bought 1 × Whole Milk", cut.Find(".inline-confirm").TextContent));
 
@@ -242,9 +242,9 @@ public class HomeCardsTests : PageTestContext
             new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
         ]);
         var cut = RenderHome();
-        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
 
-        cut.Find(".cards .split-caret").Click();
+        cut.Find(".running-low .split-caret").Click();
         cut.WaitForState(() => cut.FindAll(".split-menu").Count == 1);
         cut.FindAll(".split-menu button").Single(b => b.TextContent.Trim() == "Restocked").Click();
         cut.WaitForAssertion(() =>
@@ -266,8 +266,8 @@ public class HomeCardsTests : PageTestContext
             new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
         ]);
         var cut = RenderHome();
-        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
-        cut.FindAll(".cards button").Single(b => b.TextContent.Trim() == "Bought today").Click();
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
+        cut.FindAll(".running-low button").Single(b => b.TextContent.Trim() == "Bought today").Click();
         cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".inline-confirm")));
 
         cut.Find(".inline-confirm").QuerySelectorAll("button").Single(b => b.TextContent.Contains("Dismiss")).Click();
@@ -292,7 +292,7 @@ public class HomeCardsTests : PageTestContext
 
         cut.WaitForAssertion(() =>
         {
-            var card = Assert.Single(cut.FindAll(".cards li"));
+            var card = Assert.Single(cut.FindAll(".running-low li"));
             Assert.Contains($"🏷️ Expired {Today.AddDays(-1):MMM d}", card.TextContent);
             Assert.Contains("Overdue", card.QuerySelector(".chip")!.TextContent);
         });
@@ -339,7 +339,7 @@ public class HomeCardsTests : PageTestContext
             new PurchaseEvent { PurchasedAt = Today.AddDays(-25), Quantity = 1m, Brand = "Great Value", Size = "1 gal" },
         ]);
         var cut = RenderHome();
-        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
 
         var button = cut.Find(".copy-name");
         Assert.Equal("Copy Whole Milk to the clipboard", button.GetAttribute("aria-label"));
@@ -373,23 +373,23 @@ public class HomeCardsTests : PageTestContext
             new PurchaseEvent { PurchasedAt = Today.AddDays(-13), Quantity = 1m },
         ]);
         var cut = RenderHome();
-        cut.WaitForState(() => cut.FindAll(".cards li").Count == 2);
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 2);
 
-        cut.FindAll(".cards li").Single(li => li.TextContent.Contains("Due Soonish"))
+        cut.FindAll(".running-low li").Single(li => li.TextContent.Contains("Due Soonish"))
             .QuerySelector(".copy-name")!.Click();
         cut.WaitForAssertion(() =>
         {
-            var withNote = Assert.Single(cut.FindAll(".cards li"), li => li.QuerySelector(".copy-note") is not null);
+            var withNote = Assert.Single(cut.FindAll(".running-low li"), li => li.QuerySelector(".copy-note") is not null);
             Assert.Contains("Due Soonish", withNote.TextContent);
         });
 
         // Copying another card MOVES the one note — "Copied" must never linger on a card it
         // no longer describes.
-        cut.FindAll(".cards li").Single(li => li.TextContent.Contains("Rhythm Overdue"))
+        cut.FindAll(".running-low li").Single(li => li.TextContent.Contains("Rhythm Overdue"))
             .QuerySelector(".copy-name")!.Click();
         cut.WaitForAssertion(() =>
         {
-            var withNote = Assert.Single(cut.FindAll(".cards li"), li => li.QuerySelector(".copy-note") is not null);
+            var withNote = Assert.Single(cut.FindAll(".running-low li"), li => li.QuerySelector(".copy-note") is not null);
             Assert.Contains("Rhythm Overdue", withNote.TextContent);
         });
     }
@@ -406,7 +406,7 @@ public class HomeCardsTests : PageTestContext
             new PurchaseEvent { PurchasedAt = Today.AddDays(-25), Quantity = 1m },
         ]);
         var cut = RenderHome();
-        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
         cut.Find(".copy-name").Click();
         cut.WaitForAssertion(() =>
             Assert.Equal("Copied Whole Milk", cut.Find(".copy-announcer").TextContent.Trim()));
@@ -433,7 +433,7 @@ public class HomeCardsTests : PageTestContext
             new PurchaseEvent { PurchasedAt = Today.AddDays(-25), Quantity = 1m },
         ]);
         var cut = RenderHome();
-        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
 
         cut.Find(".copy-name").Click();
 
@@ -465,9 +465,60 @@ public class HomeCardsTests : PageTestContext
             Assert.Contains("Chicken Breast", panel.TextContent);
             Assert.Contains("Due in 4 days", panel.TextContent);
         });
-        Assert.Empty(cut.FindAll(".cards li"));  // not Running Low — it's a heads-up, not a nag
+        Assert.Empty(cut.FindAll(".running-low li"));  // not Running Low — it's a heads-up, not a nag
         // One item, one section: a coming-up item is pulled OUT of the Everything-else catch-all.
         Assert.DoesNotContain("Chicken Breast", cut.Find("details.everything-else").TextContent);
+    }
+
+    [Fact]
+    public void Coming_up_items_are_the_same_cards_as_running_low_without_the_buy_buttons()
+    {
+        // Jordan's ask: Coming up should read as a continuation of the Running Low list. So it renders
+        // the SAME card body (one CardBody, not a copy that can drift) — name, copy, status chip and
+        // urgency — on a Stocked accent, and leaves off the buy/restock actions: nothing here is low yet.
+        Seed("Chicken Breast", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-38), Quantity = 1m, Size = "2 lb" },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-24), Quantity = 1m, Size = "2 lb" },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-10), Quantity = 1m, Size = "2 lb" },
+        ]);
+        var cut = RenderHome();
+
+        cut.WaitForState(() => cut.FindAll(".coming-up li.card").Count == 1);
+        var card = cut.Find(".coming-up li.card");
+        Assert.Contains("accent-stocked", card.ClassList);
+        Assert.Equal("Chicken Breast", card.QuerySelector(".card-name")!.TextContent.Trim());
+        Assert.Equal("Stocked", card.QuerySelector(".chip")!.TextContent.Trim());
+        Assert.Equal("Due in 4 days", card.QuerySelector(".card-urgency")!.TextContent.Trim());
+        Assert.NotNull(card.QuerySelector(".size-chip"));
+        Assert.Null(card.QuerySelector(".card-actions"));
+        Assert.Equal("Coming up this week", cut.Find("#coming-up-heading").TextContent.Trim());
+    }
+
+    [Fact]
+    public void Copying_a_coming_up_card_is_announced_even_when_nothing_is_running_low()
+    {
+        // The copy announcer used to live inside the Running Low branch. With the copy button now on
+        // Coming up cards too, it has to stay mounted when Running Low is empty, or the copy is silent
+        // to a screen reader.
+        Seed("Chicken Breast", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-38), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-24), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-10), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".coming-up li.card").Count == 1);
+        Assert.Empty(cut.FindAll(".running-low"));
+        Assert.Equal("", cut.Find(".copy-announcer").TextContent.Trim());
+
+        cut.Find(".coming-up .copy-name").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("Copied", cut.Find(".coming-up .copy-note").TextContent.Trim());
+            Assert.Equal("Copied Chicken Breast", cut.Find(".copy-announcer").TextContent.Trim());
+        });
     }
 
     [Fact]
@@ -508,10 +559,10 @@ public class HomeCardsTests : PageTestContext
 
         cut.WaitForAssertion(() =>
         {
-            Assert.Contains("Due Soon Item", cut.Find(".cards").TextContent);
+            Assert.Contains("Due Soon Item", cut.Find(".running-low").TextContent);
             Assert.Contains("Soon-ish Item", cut.Find(".coming-up").TextContent);
         });
-        Assert.DoesNotContain("Soon-ish Item", cut.Find(".cards").TextContent);
+        Assert.DoesNotContain("Soon-ish Item", cut.Find(".running-low").TextContent);
         Assert.DoesNotContain("Due Soon Item", cut.Find(".coming-up").TextContent);
     }
 
@@ -535,7 +586,7 @@ public class HomeCardsTests : PageTestContext
         var cut = RenderHome();
 
         cut.WaitForState(() => cut.FindAll(".quick-update").Count > 0);
-        Assert.Empty(cut.FindAll(".cards li"));  // the count suppressed the buy → not Running Low
+        Assert.Empty(cut.FindAll(".running-low li"));  // the count suppressed the buy → not Running Low
         Assert.Empty(cut.FindAll(".coming-up")); // …and it must not resurface as a "coming up" nudge either
     }
 
@@ -561,7 +612,7 @@ public class HomeCardsTests : PageTestContext
         var cut = RenderHome();
 
         cut.WaitForState(() => cut.FindAll(".quick-update").Count > 0);
-        Assert.Empty(cut.FindAll(".cards li"));  // not Running Low (Stocked)…
+        Assert.Empty(cut.FindAll(".running-low li"));  // not Running Low (Stocked)…
         Assert.Empty(cut.FindAll(".coming-up")); // …and a fresh count keeps it out of Coming up too
     }
 

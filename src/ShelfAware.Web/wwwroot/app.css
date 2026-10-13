@@ -837,10 +837,23 @@ input:focus, select:focus {
 
 .card.accent-overdue { border-left-color: var(--overdue-line); }
 .card.accent-duesoon { border-left-color: var(--duesoon-line); }
+.card.accent-stocked { border-left-color: var(--stocked-line); }
 
-/* Compact name + note rows — shared by "You keep running out of these" (the burn-rate-≪-rebuy habit
-   insight promoted from Product Detail) and "Coming up this week" (the near-term run-out heads-up). One
-   definition so the two dashboard lists can't drift. */
+/* "Coming up this week" — the same cards as Running Low, continuing the list below it rather than
+   boxed in a panel of their own. A plain heading + lede in place of the panel's chrome, pulled close
+   to the cards so it reads as a divider within one list, not the start of a separate widget. */
+.cards-heading {
+    font-size: 1.1rem;
+    margin: 1.4rem 0 0.15rem;
+}
+.cards-lede {
+    margin: 0;
+    font-size: 0.9rem;
+}
+.coming-up .cards { margin-top: 0.6rem; }
+
+/* Compact name + note rows — the dashboard's "You keep running out of these" (the burn-rate-≪-rebuy
+   habit insight promoted from Product Detail). */
 .habit-list {
     list-style: none;
     padding: 0;

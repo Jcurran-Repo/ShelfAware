@@ -29,8 +29,8 @@ public class HomeInputGuardTests : PageTestContext
         cut.Find("form").Submit();
 
         cut.WaitForAssertion(() =>
-            Assert.Contains(PromptInput.TooLongMessage(PromptInput.ChatMaxLength), cut.Find("[role=status]").TextContent));
-        Assert.Contains("error", cut.Find("[role=status] p").GetAttribute("class"));
+            Assert.Contains(PromptInput.TooLongMessage(PromptInput.ChatMaxLength), cut.Find(".quick-update [role=status]").TextContent));
+        Assert.Contains("error", cut.Find(".quick-update [role=status] p").GetAttribute("class"));
         Assert.Empty(Chat.Asked);
     }
 
