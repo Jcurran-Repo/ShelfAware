@@ -147,33 +147,10 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
                 created++;
             }
 
-            // Buying an item again ends its "don't want it for a while": the grocery list's
-            // Ignore-for-now untracks a product, and a real purchase is the signal to resume
-            // predictions. Applies on every confirm path (manual review and auto-import alike).
-            if (!product.IsTracked)
-            {
-                product.IsTracked = true;
+            if (RecordPurchase(db, product, receipt.Id, purchaseDate, quantity, brand, size, variety,
+                    line.ExpirationDate))
                 retracked.Add(product);
-            }
-
-            db.PurchaseEvents.Add(new PurchaseEvent
-            {
-                Product = product,
-                PurchasedAt = purchaseDate,
-                Quantity = quantity,
-                Brand = brand,
-                Size = size,
-                Variety = variety,
-                ExpirationDate = line.ExpirationDate,
-                Source = PurchaseSource.Receipt,
-                ReceiptId = receipt.Id,
-            });
             purchases++;
-
-            // §13.2: the count moves by the quantity actually bought — three cans adds 3, never 1. A
-            // no-op unless this product is counted AND has an established count; the rule lives in
-            // StockLedger so removal can take back exactly this much.
-            StockLedger.Add(product, quantity);
 
             TagVocabulary.ApplyTags(product, line.Tags, vocabulary);
 
@@ -256,6 +233,43 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
         await activityLog.TrimAsync(cancellationToken); // retention: best-effort, after the commit
         return new(AlreadyConfirmed: false, purchases, created, retracked.Count,
             concerns.Count > 0 ? concerns : null);
+    }
+
+    /// <summary>
+    /// Stage ONE receipt line's purchase of <paramref name="product"/> — the purchase row stamped with its
+    /// receipt, the count moving by what was bought, and an untracked product turned back on. Shared by
+    /// the confirm above and <see cref="ReceiptLineProductService"/> (tracking a line the confirm left
+    /// unlinked), so a purchase recorded later from a receipt is the same purchase the confirm would
+    /// have recorded: same provenance, same ledger move, same retrack. Returns whether it re-tracked.
+    /// </summary>
+    public static bool RecordPurchase(
+        ShelfAwareDbContext db, Product product, int receiptId, DateOnly purchasedAt, decimal quantity,
+        string? brand, string? size, string? variety, DateOnly? expirationDate)
+    {
+        // Buying an item again ends its "don't want it for a while": the grocery list's
+        // Ignore-for-now untracks a product, and a real purchase is the signal to resume
+        // predictions. Applies on every confirm path (manual review and auto-import alike).
+        var retracked = !product.IsTracked;
+        product.IsTracked = true;
+
+        db.PurchaseEvents.Add(new PurchaseEvent
+        {
+            Product = product,
+            PurchasedAt = purchasedAt,
+            Quantity = quantity,
+            Brand = brand,
+            Size = size,
+            Variety = variety,
+            ExpirationDate = expirationDate,
+            Source = PurchaseSource.Receipt,
+            ReceiptId = receiptId,
+        });
+
+        // §13.2: the count moves by the quantity actually bought — three cans adds 3, never 1. A
+        // no-op unless this product is counted AND has an established count; the rule lives in
+        // StockLedger so removal can take back exactly this much.
+        StockLedger.Add(product, quantity);
+        return retracked;
     }
 
     /// <summary>Tags ride on <see cref="ReceiptLine.TagsJson"/> as a JSON array (null when empty).</summary>
