@@ -96,6 +96,81 @@ public class LookalikeNudgePageTests : PageTestContext
     }
 
     [Fact]
+    public async Task Merging_from_the_nudge_under_a_new_name_renames_and_undoes_in_one_tap()
+    {
+        var (breadId, loafId) = SeedLookalikePair();
+        var cut = RenderList();
+        cut.WaitForState(() => cut.FindAll(".nudge").Count > 0);
+
+        // "A new name…" opens a field pre-filled with what both names share.
+        cut.Find(".nudge-new-name").Click();
+        var field = cut.Find(".nudge-rename input");
+        Assert.Equal("Brioche Bread", field.GetAttribute("value"));
+        field.Input("Brioche Bread");
+        cut.Find(".nudge-rename").Submit();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Empty(cut.FindAll(".nudge"));
+            Assert.Contains("Merged Artesano Brioche Bread and Brioche Bread Loaf as Brioche Bread",
+                cut.Find(".nudge-done").TextContent);
+        });
+        await using (var raw = Db.CreateUnscopedContext())
+        {
+            Assert.Equal("Brioche Bread", (await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == breadId)).Name);
+            Assert.Null(await raw.Products.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Id == loafId));
+        }
+
+        // The one ↩ Undo puts back both products AND the survivor's old name.
+        cut.Find(".nudge-done button").Click();
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".nudge-done")));
+        await using var db = Db.CreateUnscopedContext();
+        Assert.Equal("Artesano Brioche Bread", (await db.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == breadId)).Name);
+        Assert.NotNull(await db.Products.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Name == "Brioche Bread Loaf"));
+    }
+
+    [Fact]
+    public async Task A_taken_new_name_keeps_the_card_and_says_why()
+    {
+        var (breadId, loafId) = SeedLookalikePair();
+        await using (var seed = Db.CreateDbContext())
+        {
+            seed.Products.Add(new Product { Name = "Sourdough" });
+            await seed.SaveChangesAsync();
+        }
+        var cut = RenderList();
+        cut.WaitForState(() => cut.FindAll(".nudge").Count > 0);
+
+        cut.Find(".nudge-new-name").Click();
+        cut.Find(".nudge-rename input").Input("sourdough");
+        cut.Find(".nudge-rename").Submit();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("already exists", cut.Find("[role=alert]").TextContent);
+            Assert.Single(cut.FindAll(".nudge-rename"));                       // the form stays open to fix it
+        });
+        await using var db = Db.CreateUnscopedContext();
+        Assert.NotNull(await db.Products.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Id == loafId)); // nothing merged
+        Assert.Equal("Artesano Brioche Bread", (await db.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == breadId)).Name);
+    }
+
+    [Fact]
+    public void Cancelling_the_new_name_closes_the_field_without_merging()
+    {
+        SeedLookalikePair();
+        var cut = RenderList();
+        cut.WaitForState(() => cut.FindAll(".nudge").Count > 0);
+
+        cut.Find(".nudge-new-name").Click();
+        cut.Find(".nudge-rename .linkish").Click();
+
+        Assert.Empty(cut.FindAll(".nudge-rename"));
+        Assert.Single(cut.FindAll(".nudge-new-name"));
+        Assert.Single(cut.FindAll(".nudge"));
+    }
+
+    [Fact]
     public void At_most_three_nudges_show_and_the_rest_sit_behind_an_overflow_note()
     {
         // Four lookalike pairs (a catalog dense with near-twins). Only three cards show so the actual list

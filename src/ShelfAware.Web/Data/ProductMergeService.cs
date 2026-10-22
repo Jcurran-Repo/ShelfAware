@@ -21,6 +21,11 @@ namespace ShelfAware.Web.Data;
 /// <para>The merge captures an undo MANIFEST (see <c>ProductsMergedHandler</c>) — the ids of every
 /// row it moves, the source's full definition, and what it added to the target — so it is reversible:
 /// the /history undo rebuilds the source and pulls its contribution back out of the survivor.</para>
+/// <para>A merge can also give the survivor a NEW name (<c>renameTo</c>) — the lookalike card's "neither
+/// name, call it this" choice. The rename runs through <see cref="ProductRenameService.RenameOnAsync"/>, the
+/// one definition of a rename (its identity-taken refusal and recipe re-point included), inside the same
+/// transaction, and rides on the SAME undo entry: one action, one ↩ Undo that puts both products and both
+/// names back. A refused rename rolls the whole merge back, so the user is never left with half of it.</para>
 /// </summary>
 public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog activityLog)
 {
@@ -28,7 +33,8 @@ public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog act
         bool Ok, string Message, int MovedPurchases = 0, int RelinkedIngredients = 0, int UndoEntryId = 0);
 
     public async Task<Result> MergeAsync(
-        int sourceId, int targetId, string? varietyForMoved = null, CancellationToken cancellationToken = default)
+        int sourceId, int targetId, string? varietyForMoved = null, string? renameTo = null,
+        CancellationToken cancellationToken = default)
     {
         if (sourceId == targetId) return new(false, "A product can't be merged into itself.");
         var variety = string.IsNullOrWhiteSpace(varietyForMoved) ? null : varietyForMoved.Trim();
@@ -37,6 +43,9 @@ public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog act
         var source = await db.Products.FindAsync([sourceId], cancellationToken);
         var target = await db.Products.FindAsync([targetId], cancellationToken);
         if (source is null || target is null) return new(false, "Product not found.");
+        // A blank or unchanged name is no rename — the merge keeps the target's name exactly as before.
+        var newName = renameTo?.Trim();
+        if (string.IsNullOrEmpty(newName) || string.Equals(newName, target.Name, StringComparison.Ordinal)) newName = null;
 
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
@@ -118,21 +127,38 @@ public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog act
         target.IsTracked |= source.IsTracked;
         target.DefaultUnit ??= source.DefaultUnit;
 
+        // The source goes BEFORE any rename: the rename's taken-check reads the products table, and the source
+        // is exactly the name a user may want to keep under a cleaned-up spelling ("Half & Half" over both
+        // "Half and Half" and "Half-and-Half") — it must not count as the twin that blocks it. Still inside
+        // the transaction, so a refused rename below rolls this delete back with everything else.
+        var sourceName = source.Name;
+        var sourceSnapshot = new MergedSourceSnapshot(
+            source.Category, source.DefaultUnit, source.IsTracked, source.TrackQuantity,
+            source.QuantityOnHand, source.QuantityCountedAt, source.CreatedByReceiptId,
+            sourceTagValues, sourceSubValues);
+        db.Products.Remove(source);
+        await db.SaveChangesAsync(cancellationToken);
+
+        string? targetNameBefore = null;
+        if (newName is not null)
+        {
+            var renamed = await ProductRenameService.RenameOnAsync(db, targetId, newName, cancellationToken);
+            if (!renamed.Ok) return new(false, renamed.Message); // tx disposes uncommitted ⇒ the merge rolls back
+            targetNameBefore = renamed.OldName;
+        }
+
         // The undo record, staged inside the merge's transaction so it commits with the merge (the source's
-        // fields are read now, before the row is gone). Reversible now — the manifest lets the undo rebuild
-        // the source and pull its contribution back out of the survivor.
+        // fields were read above, before the row went). Reversible — the manifest lets the undo rebuild the
+        // source, pull its contribution back out of the survivor, and give the survivor its old name back.
         var payload = new ProductsMergedPayload(
-            source.Name, target.Name, targetId,
-            new MergedSourceSnapshot(
-                source.Category, source.DefaultUnit, source.IsTracked, source.TrackQuantity,
-                source.QuantityOnHand, source.QuantityCountedAt, source.CreatedByReceiptId,
-                sourceTagValues, sourceSubValues),
+            sourceName, target.Name, targetId,
+            sourceSnapshot,
             movedPurchaseIds, stampedPurchaseIds, movedLineIds, stampedLineIds,
             aliasIds, signalIds, addedTags, addedSubs, relinkedIds,
-            targetTrackedBefore, target.IsTracked, targetUnitBefore, target.DefaultUnit);
+            targetTrackedBefore, target.IsTracked, targetUnitBefore, target.DefaultUnit,
+            targetNameBefore);
         var entry = activityLog.Record(db, ActivityKind.ProductsMerged, payload);
 
-        db.Products.Remove(source);
         await db.SaveChangesAsync(cancellationToken); // assigns entry.Id — returned for the inline ↩ Undo
         await tx.CommitAsync(cancellationToken);
         await activityLog.TrimAsync(cancellationToken);
@@ -158,6 +184,30 @@ public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog act
         var leftover = sourceTokens.Where(t => !targetKeys.Contains(Fold(t))).ToList();
         if (leftover.Count == 0 || leftover.Count == sourceTokens.Count) return null;
         return string.Join(' ', leftover);
+    }
+
+    /// <summary>
+    /// Suggest a name for two look-alikes merged under a new one: the longest run of consecutive words both
+    /// names share ("Artesano Brioche Bread" + "Brioche Bread Loaf" → "Brioche Bread"), spelled as in
+    /// <paramref name="first"/>. Null when they share no word. Purely a pre-fill for the lookalike card's
+    /// name field; the user edits it. Plurals fold the same way as <see cref="SuggestVarietyLabel"/>.
+    /// </summary>
+    public static string? SuggestSharedName(string first, string second)
+    {
+        var a = Tokenize(first);
+        var aKeys = a.Select(Fold).ToList();
+        var bKeys = Tokenize(second).Select(Fold).ToList();
+
+        int bestStart = 0, bestLength = 0;
+        for (var i = 0; i < aKeys.Count; i++)
+            for (var j = 0; j < bKeys.Count; j++)
+            {
+                var length = 0;
+                while (i + length < aKeys.Count && j + length < bKeys.Count && aKeys[i + length] == bKeys[j + length])
+                    length++;
+                if (length > bestLength) (bestStart, bestLength) = (i, length);
+            }
+        return bestLength == 0 ? null : string.Join(' ', a.Skip(bestStart).Take(bestLength));
     }
 
     private static List<string> Tokenize(string name) =>

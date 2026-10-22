@@ -48,8 +48,27 @@
                 <div class="nudge-actions">
                     <button class="secondary" aria-label="Keep @n.Pair.LowerName and merge @n.Pair.HigherName into it" @onclick="() => MergeKeeping(n.Pair.LowerId, n.Pair.LowerName, n.Pair.HigherId, n.Pair.HigherName)" disabled="@nudgeBusy">@n.Pair.LowerName</button>
                     <button class="secondary" aria-label="Keep @n.Pair.HigherName and merge @n.Pair.LowerName into it" @onclick="() => MergeKeeping(n.Pair.HigherId, n.Pair.HigherName, n.Pair.LowerId, n.Pair.LowerName)" disabled="@nudgeBusy">@n.Pair.HigherName</button>
+                    @if (renamingPair != (n.Pair.LowerId, n.Pair.HigherId))
+                    {
+                        <button class="secondary nudge-new-name" aria-label="Merge @n.Pair.LowerName and @n.Pair.HigherName under a new name" @onclick="() => StartRename(n)" disabled="@nudgeBusy">A new name…</button>
+                    }
                     <button class="linkish" @onclick="() => DismissNudge(n)" disabled="@nudgeBusy">They're different</button>
                 </div>
+                @if (renamingPair == (n.Pair.LowerId, n.Pair.HigherId))
+                {
+                    @* Neither name is right ("Brioche Bread" over "Artesano Brioche Bread" and "Brioche Bread Loaf"):
+                       the pair folds into one under the name typed here — the same undoable merge, renaming the
+                       survivor in the same step. *@
+                    <form class="nudge-rename" @onsubmit="() => MergeRenaming(n)" @onsubmit:preventDefault>
+                        <label>
+                            Call it
+                            <input @ref="renameInput" @bind="renameDraft" @bind:event="oninput"
+                                   aria-label="New name for @n.Pair.LowerName and @n.Pair.HigherName" placeholder="e.g. Brioche Bread" />
+                        </label>
+                        <button type="submit" disabled="@(nudgeBusy || string.IsNullOrWhiteSpace(renameDraft))">Merge</button>
+                        <button type="button" class="linkish" @onclick="CancelRename" disabled="@nudgeBusy">Cancel</button>
+                    </form>
+                }
             </div>
         </section>
     }
@@ -182,6 +201,11 @@ else
     private (int EntryId, string Message)? mergedNotice;
     private string? nudgeError;
     private bool nudgeBusy;
+    // The one pair whose "A new name…" form is open (only one at a time), and what's been typed into it.
+    private (int LowerId, int HigherId)? renamingPair;
+    private string renameDraft = "";
+    private ElementReference renameInput;
+    private bool focusRenameInput; // set when the field opens; the next render moves focus into it
 
     // One card, of either kind. Pair and cluster nudges are ranked TOGETHER — most-bothered first
     // (Frazzled → Fresh), then by name — under one cap, so a catalog dense with near-twins can't bury the
@@ -302,6 +326,52 @@ else
         catch (Exception ex)
         {
             Logger.LogError(ex, "Merging a lookalike pair failed.");
+            nudgeError = "Couldn't merge just now — please try again.";
+        }
+        finally { nudgeBusy = false; }
+    }
+
+    // "A new name…" — open the card's inline name field, pre-filled with what the two names share (the
+    // "Brioche Bread" in both breads) when they share a run of words, so the common fix is one tap.
+    private void StartRename(LookalikeNudge n)
+    {
+        renamingPair = (n.Pair.LowerId, n.Pair.HigherId);
+        renameDraft = ProductMergeService.SuggestSharedName(n.Pair.LowerName, n.Pair.HigherName) ?? "";
+        nudgeError = null;
+        focusRenameInput = true;
+    }
+
+    private void CancelRename()
+    {
+        renamingPair = null;
+        renameDraft = "";
+    }
+
+    // Merge the pair under the typed name: the higher folds into the lower, which takes the new name — one
+    // undoable merge (ProductMergeService renames inside it), so the inline ↩ Undo restores both products and
+    // both names. A refused name (taken by another product, no letters) keeps the form open with the reason.
+    private async Task MergeRenaming(LookalikeNudge n)
+    {
+        if (nudgeBusy || string.IsNullOrWhiteSpace(renameDraft)) return;
+        nudgeBusy = true;
+        nudgeError = null;
+        try
+        {
+            var newName = renameDraft.Trim();
+            var result = await Merge.MergeAsync(sourceId: n.Pair.HigherId, targetId: n.Pair.LowerId, renameTo: newName);
+            if (result.Ok)
+            {
+                mergedNotice = (result.UndoEntryId, $"Merged {n.Pair.LowerName} and {n.Pair.HigherName} as {newName}.");
+                CancelRename();
+            }
+            else
+                nudgeError = result.Message;
+            await LoadAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Merging a lookalike pair under a new name failed.");
             nudgeError = "Couldn't merge just now — please try again.";
         }
         finally { nudgeBusy = false; }
@@ -646,6 +716,16 @@ else
     // up in DisposeAsync so the listener doesn't outlive the page.
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        // The "A new name…" button that was just pressed is gone from the DOM, so focus would fall to the body;
+        // put it in the field the press opened instead.
+        if (focusRenameInput && renamingPair is not null)
+        {
+            focusRenameInput = false;
+            try { await renameInput.FocusAsync(); }
+            catch (JSDisconnectedException) { return; } // circuit gone — there is no DOM left to focus
+            catch (JSException ex) { Logger.LogDebug(ex, "Couldn't focus the lookalike card's name field."); }
+        }
+
         if (!firstRender) return;
         try
         {
