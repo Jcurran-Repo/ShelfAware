@@ -101,6 +101,9 @@ else
                                out". Unlike Restocked (a fresh supply → re-anchors a full cadence) it just snoozes
                                the nag a few days, so it can't go silent while your leftovers run out. *@
                             <button class="secondary" @onclick="() => StillInStock(p)" disabled="@actionBusy" aria-label="Mark @p.Name still in stock">Still in stock</button>
+                            @* "Don't want it for a while" — the grocery list's Untrack, reached from the card that
+                               is nagging about it. Last, because it ends the reminder rather than answering it. *@
+                            <UntrackButton Name="@p.Name" Class="secondary" Disabled="actionBusy" OnUntrack="() => Untrack(p)" />
                         </SplitButton>
                     </div>
                 </DashboardCard>
@@ -117,14 +120,19 @@ else
         <section class="coming-up" aria-labelledby="coming-up-heading">
             <h2 id="coming-up-heading" class="cards-heading">Coming up this week</h2>
             <p class="muted cards-lede">Not low yet, but likely due within the next week — here so a slower-moving item doesn't sneak up on you between trips.</p>
-            @* The same card as Running Low, so the two read as one list in order of urgency. No
-               action buttons: nothing here is asking to be bought yet, and "Still in stock" would
-               snooze a nag that doesn't exist. *@
+            @* The same card as Running Low, so the two read as one list in order of urgency. No buy
+               buttons: nothing here is asking to be bought yet, and "Still in stock" would snooze a nag
+               that doesn't exist. Untrack is the one action that fits — a heads-up about something you
+               no longer want is the moment to say so, before it becomes a nag. *@
             <ul class="cards">
                 @foreach (var p in comingUp)
                 {
                     <DashboardCard Product="p" Result="predictions[p.Id]" Urgency="@Urgency(predictions[p.Id])"
-                                   CopyNote="@CopyNoteFor(p)" OnCopy="() => CopyName(p)" />
+                                   CopyNote="@CopyNoteFor(p)" OnCopy="() => CopyName(p)">
+                        <div class="card-actions">
+                            <UntrackButton Name="@p.Name" Disabled="actionBusy" OnUntrack="() => Untrack(p)" />
+                        </div>
+                    </DashboardCard>
                 }
             </ul>
         </section>
@@ -174,7 +182,7 @@ else
         {
             <table>
                 <thead>
-                    <tr><th>Item</th><th>Status</th><th>Why</th></tr>
+                    <tr><th>Item</th><th>Status</th><th>Why</th><th><span class="visually-hidden">Actions</span></th></tr>
                 </thead>
                 <tbody>
                     @foreach (var p in everythingElse)
@@ -184,6 +192,7 @@ else
                             <td>@p.Name</td>
                             <td><span class="chip chip-@PredictionDisplay.ChipClass(r.Status)">@PredictionDisplay.Label(r.Status)</span></td>
                             <td class="muted">@(r.Status == PredictionStatus.Unknown ? LearningHint(p) : r.Basis)</td>
+                            <td><UntrackButton Name="@p.Name" Disabled="actionBusy" OnUntrack="() => Untrack(p)" /></td>
                         </tr>
                     }
                 </tbody>
@@ -341,6 +350,23 @@ else
         try
         {
             var rec = await Store.RecordSignalAsync(p.Id, SignalKind.StillInStock);
+            if (rec is not null) lastAction = (rec.Id, rec.Summary);
+            await LoadAsync();
+        }
+        finally { actionBusy = false; }
+    }
+
+    // Untrack = "don't want it for a while" — the grocery list's action, through the same store write as
+    // the Products checkbox and the set_tracking tool, so it lands in History and the inline undo brings
+    // the card straight back. The item leaves the dashboard until a purchase re-tracks it.
+    private async Task Untrack(Product p)
+    {
+        if (actionBusy) return;
+        actionBusy = true;
+        actionNote = null;
+        try
+        {
+            var rec = await Store.SetTrackingAsync(p.Id, tracked: false);
             if (rec is not null) lastAction = (rec.Id, rec.Summary);
             await LoadAsync();
         }

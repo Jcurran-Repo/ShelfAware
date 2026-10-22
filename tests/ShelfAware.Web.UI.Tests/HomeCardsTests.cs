@@ -233,6 +233,89 @@ public class HomeCardsTests : PageTestContext
         Assert.Equal(2, await raw.PurchaseEvents.IgnoreQueryFilters().CountAsync(x => x.ProductId == id)); // manual buy reversed
     }
 
+    // ------------------------------------------------------------------------------------ Untrack
+
+    [Fact]
+    public async Task Untrack_from_a_running_low_card_stops_tracking_and_undo_brings_it_back()
+    {
+        var id = Seed("Whole Milk", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-45), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
+
+        // Behind the caret with the other alternates — it ends the reminder rather than answering it.
+        cut.Find(".running-low .split-caret").Click();
+        cut.WaitForState(() => cut.FindAll(".split-menu").Count == 1);
+        cut.FindAll(".split-menu button").Single(b => b.TextContent.Trim() == "Untrack").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Empty(cut.FindAll(".running-low li"));
+            Assert.Contains("Stopped tracking Whole Milk", cut.Find(".inline-confirm").TextContent);
+        });
+        await using (var raw = Db.CreateUnscopedContext())
+        {
+            var product = await raw.Products.IgnoreQueryFilters().Include(p => p.Purchases).SingleAsync(p => p.Id == id);
+            Assert.False(product.IsTracked);
+            Assert.Equal(2, product.Purchases.Count); // "for a while", not "forget it ever existed"
+        }
+
+        // The same one-service undo as the other card actions: the card comes straight back.
+        cut.Find(".inline-confirm").QuerySelectorAll("button").Single(b => b.TextContent.Contains("Undo")).Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Empty(cut.FindAll(".inline-confirm"));
+            Assert.Single(cut.FindAll(".running-low li"));
+        });
+    }
+
+    [Fact]
+    public void Untrack_from_coming_up_takes_the_card_off_the_dashboard()
+    {
+        Seed("Chicken Breast", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-38), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-24), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-10), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".coming-up li.card").Count == 1);
+
+        cut.Find(".coming-up .untrack-btn").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Empty(cut.FindAll(".coming-up"));
+            Assert.Contains("Stopped tracking Chicken Breast", cut.Find(".inline-confirm").TextContent);
+        });
+        // Gone from the page, not just moved down into the catch-all.
+        Assert.DoesNotContain("Chicken Breast", cut.Find("details.everything-else").TextContent);
+    }
+
+    [Fact]
+    public async Task Untrack_from_everything_else_removes_the_row()
+    {
+        var id = Seed("Brand New");
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll("details.everything-else tbody tr").Count == 1);
+
+        var button = cut.Find("details.everything-else .untrack-btn");
+        Assert.Equal("Untrack Brand New — stop suggesting it until it's bought again", button.GetAttribute("aria-label"));
+        button.Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Empty(cut.FindAll("details.everything-else tbody tr"));
+            Assert.Contains("No other tracked products yet.", cut.Find("details.everything-else").TextContent);
+        });
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.False((await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == id)).IsTracked);
+    }
+
     [Fact]
     public async Task Restocked_offers_an_inline_undo_that_reverses_the_signal()
     {
@@ -491,7 +574,9 @@ public class HomeCardsTests : PageTestContext
         Assert.Equal("Stocked", card.QuerySelector(".chip")!.TextContent.Trim());
         Assert.Equal("Due in 4 days", card.QuerySelector(".card-urgency")!.TextContent.Trim());
         Assert.NotNull(card.QuerySelector(".size-chip"));
-        Assert.Null(card.QuerySelector(".card-actions"));
+        // No buy/restock actions — only "don't want it for a while", which fits a heads-up as well as a nag.
+        var actions = card.QuerySelectorAll(".card-actions button").Select(b => b.TextContent.Trim()).ToList();
+        Assert.Equal(["Untrack"], actions);
         Assert.Equal("Coming up this week", cut.Find("#coming-up-heading").TextContent.Trim());
     }
 

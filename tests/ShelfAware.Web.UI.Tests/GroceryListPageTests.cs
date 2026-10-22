@@ -186,6 +186,11 @@ public class GroceryListPageTests : PageTestContext
         var product = await raw.Products.IgnoreQueryFilters().Include(p => p.Purchases).SingleAsync(p => p.Id == id);
         Assert.False(product.IsTracked);
         Assert.Equal(2, product.Purchases.Count); // "for a while", not "forget it ever existed"
+
+        // Through the one tracking write, so it lands in History and can be taken back — it used to save
+        // the flag straight to the row and leave no trace.
+        var entry = Assert.Single(await ActivityLog.GetHistoryAsync());
+        Assert.Equal("Stopped tracking Whole Milk", entry.Summary);
     }
 
     // ------------------------------------------------------------------------- copy and download

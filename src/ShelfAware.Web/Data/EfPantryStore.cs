@@ -361,19 +361,20 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         return true;
     }
 
-    public async Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default)
+    public async Task<ActivityRef?> SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var product = await db.Products.FindAsync([productId], cancellationToken);
-        if (product is null) return;
+        if (product is null) return null;
+        if (product.IsTracked == tracked) return null; // only a real change is worth an undo record
 
         var was = product.IsTracked;
         product.IsTracked = tracked;
-        if (was != tracked) // only a real change is worth an undo record
-            activityLog.Record(db, ActivityKind.TrackingChanged,
-                new TrackingChangedPayload(productId, was, tracked, product.Name));
-        await db.SaveChangesAsync(cancellationToken);
+        var entry = activityLog.Record(db, ActivityKind.TrackingChanged,
+            new TrackingChangedPayload(productId, was, tracked, product.Name));
+        await db.SaveChangesAsync(cancellationToken); // the flip and its undo record commit together
         await activityLog.TrimAsync(cancellationToken);
+        return new ActivityRef(entry.Id, entry.Summary);
     }
 
     public async Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default)

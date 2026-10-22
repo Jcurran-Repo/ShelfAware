@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Undo;
@@ -359,9 +360,11 @@ public sealed class ActivityLogTests : IDisposable
     public async Task Undoing_a_tracking_change_flips_it_back()
     {
         var id = await SeedProduct(tracked: true);
-        await _store.SetTrackingAsync(id, false); // stop tracking
+        var recorded = await _store.SetTrackingAsync(id, false); // stop tracking
         var entry = await LatestEntry();
         Assert.Equal("Stopped tracking Whole Milk", entry.Summary);
+        // The ref the dashboard's inline undo keys on is THIS entry, not a fresh guess at it.
+        Assert.Equal(new ActivityRef(entry.Id, entry.Summary), recorded);
 
         Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
         Assert.True((await ReadProduct(id))!.IsTracked);
@@ -371,8 +374,9 @@ public sealed class ActivityLogTests : IDisposable
     public async Task Setting_tracking_to_the_same_value_records_nothing()
     {
         var id = await SeedProduct(tracked: true);
-        await _store.SetTrackingAsync(id, true); // no change — nothing to undo
+        var recorded = await _store.SetTrackingAsync(id, true); // no change — nothing to undo
 
+        Assert.Null(recorded); // so no surface offers an undo that would do nothing
         Assert.Empty(await _log.GetHistoryAsync());
     }
 
