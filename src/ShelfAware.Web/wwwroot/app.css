@@ -1578,6 +1578,13 @@ button.mic-speaking {
     margin-top: 0.75rem;
 }
 
+/* The per-line "Create new product" offer for a confirmed line that points at no product — a quiet
+   inline action beside the name, so the table still reads as a ledger first. */
+.receipt-line-track {
+    font-size: 0.9em;
+    white-space: nowrap;
+}
+
 /* The money figures printed on the receipt (subtotal/tax/savings/total) — a compact right-aligned
    summary beneath the line-item table, distinct from that table's computed line-item sum. */
 .receipt-totals {

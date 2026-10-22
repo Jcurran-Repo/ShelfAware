@@ -86,8 +86,8 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
     }
 
     // The global tag universe (seed ∪ every stored tag) — the same vocabulary receipt confirmation
-    // canonicalizes against, so chat-applied tags dedup identically.
-    private static async Task<List<string>> LoadVocabularyAsync(ShelfAwareDbContext db, CancellationToken cancellationToken)
+    // canonicalizes against, so chat-applied tags dedup identically. Shared with ReceiptLineProductService.
+    internal static async Task<List<string>> LoadVocabularyAsync(ShelfAwareDbContext db, CancellationToken cancellationToken)
     {
         var stored = await db.ProductTags.Select(t => t.Value).Distinct().ToListAsync(cancellationToken);
         return TagVocabulary.Seed.Concat(stored).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
