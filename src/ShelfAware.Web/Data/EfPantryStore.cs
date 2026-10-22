@@ -368,10 +368,9 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         if (product is null) return null;
         if (product.IsTracked == tracked) return null; // only a real change is worth an undo record
 
-        var was = product.IsTracked;
         product.IsTracked = tracked;
         var entry = activityLog.Record(db, ActivityKind.TrackingChanged,
-            new TrackingChangedPayload(productId, was, tracked, product.Name));
+            new TrackingChangedPayload(productId, WasTracked: !tracked, tracked, product.Name));
         await db.SaveChangesAsync(cancellationToken); // the flip and its undo record commit together
         await activityLog.TrimAsync(cancellationToken);
         return new ActivityRef(entry.Id, entry.Summary);

@@ -274,6 +274,59 @@ public class HomeCardsTests : PageTestContext
     }
 
     [Fact]
+    public void A_card_action_hands_focus_to_its_notice_because_the_card_it_sat_on_is_gone()
+    {
+        Seed("Whole Milk", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-45), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
+
+        cut.Find(".running-low .split-caret").Click();
+        cut.WaitForState(() => cut.FindAll(".split-menu").Count == 1);
+        cut.FindAll(".split-menu button").Single(b => b.TextContent.Trim() == "Untrack").Click();
+
+        // The button that was focused went with its card; without this, focus falls to the body and the
+        // next Tab starts again from the top of the page.
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".running-low li")));
+        var notice = cut.Find(".inline-confirm");
+        Assert.Equal("-1", notice.GetAttribute("tabindex"));
+        JSInterop.VerifyFocusAsyncInvoke();
+    }
+
+    [Fact]
+    public async Task An_untrack_that_changed_nothing_does_not_leave_an_older_undo_standing()
+    {
+        Seed("Whole Milk", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-45), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
+        ]);
+        var eggs = Seed("Eggs");
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".running-low li").Count == 1);
+
+        cut.FindAll(".running-low button").Single(b => b.TextContent.Trim() == "Bought today").Click();
+        cut.WaitForAssertion(() => Assert.Contains("Bought 1 × Whole Milk", cut.Find(".inline-confirm").TextContent));
+
+        // Untracked somewhere else (voice, the Products page, another tab) while this page sat stale…
+        await Store.SetTrackingAsync(eggs, tracked: false);
+        // …so this tap records nothing. The Milk purchase's Undo must not survive beside it, where
+        // pressing it would take back a purchase the household never meant to touch.
+        // (Bought today moved Milk down here too, a full rhythm out — so pick Eggs' row by name.)
+        cut.FindAll("details.everything-else tbody tr").Single(r => r.TextContent.Contains("Eggs"))
+            .QuerySelector(".untrack-btn")!.Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.DoesNotContain("Eggs", cut.Find("details.everything-else").TextContent);
+            Assert.Empty(cut.FindAll(".inline-confirm"));
+        });
+    }
+
+    [Fact]
     public void Untrack_from_coming_up_takes_the_card_off_the_dashboard()
     {
         Seed("Chicken Breast", p => p.Purchases =
