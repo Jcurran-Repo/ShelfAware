@@ -31,7 +31,7 @@ public class ReceiptsPageTests : PageTestContext
             NullLogger<ReceiptStorage>.Instance);
         Services.AddSingleton(Storage);
         Services.AddSingleton(new ReceiptRemovalService(Factory, Storage, NullLogger<ReceiptRemovalService>.Instance));
-        Services.AddSingleton(new ReceiptLineProductService(Factory));
+        Services.AddSingleton(new ReceiptLineProductService(Factory, ActivityLog));
     }
 
     protected override void Dispose(bool disposing)

@@ -132,28 +132,25 @@ else
                                     {
                                         <span class="muted"> · @brand</span>
                                     }
-                                    @if (row.Receipt.Status == ReceiptStatus.Confirmed && line.ProductId is null)
+                                    @if (ReceiptLineProductService.IsTrackable(row.Receipt, line, row.Removable))
                                     {
                                         @* The label is the write's own plan (PlanFor), so the button never offers a
                                            new product the write would then fold into an existing one. *@
                                         var plan = ReceiptLineProductService.PlanFor(line.NormalizedName, catalog);
                                         <span class="receipt-line-track">
-                                            @switch (plan.Kind)
+                                            @if (plan.Kind == ReceiptLineProductService.PlanKind.Ambiguous)
                                             {
-                                                case ReceiptLineProductService.PlanKind.Create:
-                                                    <button class="linkish" @onclick="() => TrackAsync(row, line)" disabled="@trackBusy"
-                                                            aria-label="Create new product @line.NormalizedName">Create new product</button>
-                                                    break;
-                                                case ReceiptLineProductService.PlanKind.Link:
-                                                    <button class="linkish" @onclick="() => TrackAsync(row, line)" disabled="@trackBusy"
-                                                            aria-label="Track @line.NormalizedName as @plan.Existing!.Name">Track as @plan.Existing!.Name</button>
-                                                    break;
-                                                case ReceiptLineProductService.PlanKind.Ambiguous:
-                                                    <span class="muted">More than one product has this name — <a href="/products">merge them</a> first.</span>
-                                                    break;
-                                                default:
-                                                    <span class="muted">This name can't be a product.</span>
-                                                    break;
+                                                <span class="muted">More than one product has this name — <a href="/products">merge them</a> first.</span>
+                                            }
+                                            else if (plan.Existing is { } existing)
+                                            {
+                                                <button class="linkish" @onclick="() => TrackAsync(row, line)" disabled="@trackBusy"
+                                                        aria-label="Track @line.NormalizedName as @existing.Name">Track as @existing.Name</button>
+                                            }
+                                            else
+                                            {
+                                                <button class="linkish" @onclick="() => TrackAsync(row, line)" disabled="@trackBusy"
+                                                        aria-label="Create new product @line.NormalizedName">Create new product</button>
                                             }
                                         </span>
                                     }
@@ -321,12 +318,11 @@ else
         }
     }
 
-    // A confirmed receipt's lines that point at no product. Pending receipts have none by this
-    // definition — review links their lines.
+    // The lines the track offer is made for — the same IsTrackable the per-line button and the write
+    // ask, so the chip's count, the callout and the buttons can't disagree. Removable is the receipt's
+    // "has a stamped purchase", which is the provenance half of that question.
     private static List<ReceiptLine> Untracked(ReceiptRow row) =>
-        row.Receipt.Status == ReceiptStatus.Confirmed
-            ? row.Receipt.Lines.Where(l => l.ProductId is null).ToList()
-            : [];
+        row.Receipt.Lines.Where(l => ReceiptLineProductService.IsTrackable(row.Receipt, l, row.Removable)).ToList();
 
     private async Task TrackAsync(ReceiptRow row, ReceiptLine line)
     {
@@ -334,51 +330,62 @@ else
         trackBusy = true;
         trackNoteFor = row.Receipt.Id;
         trackNoteIsError = false;
+        ReceiptLineProductService.Outcome outcome;
         try
         {
-            var outcome = await LineProducts.TrackAsync(line.Id);
-            if (outcome.ProductId is { } pid) line.ProductId = pid;
-            var name = outcome.ProductName ?? line.NormalizedName;
-            var date = row.Receipt.PurchasedAt?.ToString("MMM d") ?? "this receipt's date";
-            var retracked = outcome.Retracked ? " It was untracked, so it's back on your list too." : "";
-            switch (outcome.Status)
-            {
-                case ReceiptLineProductService.Status.Created:
-                    catalog.Add(new Product { Id = outcome.ProductId!.Value, Name = name });
-                    trackNote = $"Created “{name}” and recorded this purchase on {date}.";
-                    break;
-                case ReceiptLineProductService.Status.Linked:
-                    trackNote = $"Linked to “{name}” — this purchase on {date} is on its history now.{retracked}";
-                    break;
-                case ReceiptLineProductService.Status.AlreadyLinked:
-                    trackNote = $"That line is already tracked as “{name}”.";
-                    break;
-                case ReceiptLineProductService.Status.Ambiguous:
-                    trackNoteIsError = true;
-                    trackNote = $"More than one product is called “{line.NormalizedName}” now — merge them on Products, then try again. Nothing was changed.";
-                    break;
-                default:
-                    trackNoteIsError = true;
-                    trackNote = "That line can't be tracked any more — reload the page. Nothing was changed.";
-                    break;
-            }
-            // Its purchase now carries this receipt's id, so the receipt can be removed as a unit.
-            if (outcome.Status is ReceiptLineProductService.Status.Created or ReceiptLineProductService.Status.Linked
-                && !row.Removable && receipts is not null)
-            {
-                receipts[receipts.IndexOf(row)] = row with { Removable = true };
-            }
+            outcome = await LineProducts.TrackAsync(line.Id);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Tracking receipt line {LineId} as a product failed.", line.Id);
             trackNoteIsError = true;
-            trackNote = "Couldn't create the product — nothing was changed. Try again.";
+            trackNote = "Couldn't track that line — nothing was changed. Try again.";
+            return;
         }
         finally
         {
             trackBusy = false;
+        }
+
+        if (outcome.ProductId is { } pid)
+        {
+            line.ProductId = pid;
+            // Keep the plans current: whichever product the line landed on is now in the catalog, so a
+            // second line with its name offers "Track as" — including one created elsewhere since load.
+            if (catalog.All(p => p.Id != pid))
+                catalog.Add(new Product { Id = pid, Name = outcome.ProductName ?? line.NormalizedName });
+        }
+        var name = outcome.ProductName ?? line.NormalizedName;
+        var date = row.Receipt.PurchasedAt?.ToString("MMM d") ?? "this receipt's date";
+        var retracked = outcome.Retracked ? " It was untracked, so it's back on your list too." : "";
+        switch (outcome.Status)
+        {
+            case ReceiptLineProductService.Status.Created:
+                trackNote = $"Created “{name}” and recorded this purchase on {date}. Undo it from History.";
+                break;
+            case ReceiptLineProductService.Status.Linked:
+                trackNote = $"Linked to “{name}” — this purchase on {date} is on its history now.{retracked} Undo it from History.";
+                break;
+            case ReceiptLineProductService.Status.AlreadyLinked:
+                trackNote = $"That line is already tracked as “{name}”.";
+                break;
+            case ReceiptLineProductService.Status.Ambiguous:
+                trackNoteIsError = true;
+                trackNote = $"More than one product is called “{line.NormalizedName}” now — merge them on Products, then try again. Nothing was changed.";
+                break;
+            default:
+                trackNoteIsError = true;
+                trackNote = "That line can't be tracked any more — reload the page. Nothing was changed.";
+                break;
+        }
+        // Its purchase now carries this receipt's id, so the receipt can be removed as a unit. Only if the
+        // row is still listed — a removal that finished while the track was in flight took it away.
+        if (outcome.Status is ReceiptLineProductService.Status.Created or ReceiptLineProductService.Status.Linked
+            && !row.Removable && receipts is not null)
+        {
+            var index = receipts.IndexOf(row);
+            if (index >= 0) receipts[index] = row with { Removable = true };
         }
     }
 

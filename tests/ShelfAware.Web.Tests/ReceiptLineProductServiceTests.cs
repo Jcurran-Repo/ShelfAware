@@ -1,7 +1,11 @@
+using System.Data.Common;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Data;
+using ShelfAware.Web.Undo;
 
 namespace ShelfAware.Web.Tests;
 
@@ -15,11 +19,16 @@ public class ReceiptLineProductServiceTests : IDisposable
     private readonly TestDb _db = new();
     private readonly string _dataDir =
         Path.Combine(Path.GetTempPath(), "shelfaware-web-tests", Guid.NewGuid().ToString("N"));
+    private readonly ActivityLogService _log;
     private readonly ReceiptLineProductService _service;
 
     private static readonly DateOnly Bought = new(2026, 7, 1);
 
-    public ReceiptLineProductServiceTests() => _service = new ReceiptLineProductService(_db);
+    public ReceiptLineProductServiceTests()
+    {
+        _log = UndoTesting.Log(_db);
+        _service = new ReceiptLineProductService(_db, _log);
+    }
 
     public void Dispose()
     {
@@ -151,14 +160,14 @@ public class ReceiptLineProductServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Linking_retracks_an_untracked_product_and_moves_its_count()
+    public async Task Linking_retracks_an_untracked_product_and_moves_a_count_taken_before_the_confirm()
     {
         var eggs = await SeedProduct("Eggs", p =>
         {
             p.IsTracked = false;
             p.TrackQuantity = true;
             p.QuantityOnHand = 3;
-            p.QuantityCountedAt = DateTimeOffset.Now.AddDays(-30);
+            p.QuantityCountedAt = DateTimeOffset.Now.AddDays(-30); // before the confirm: it never saw this buy
         });
         var removed = Line("Eggs");
         removed.Quantity = 2;
@@ -171,6 +180,84 @@ public class ReceiptLineProductServiceTests : IDisposable
         var stored = await db.Products.SingleAsync(p => p.Id == eggs.Id);
         Assert.True(stored.IsTracked);
         Assert.Equal(5m, stored.QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task A_count_taken_since_the_confirm_already_holds_the_purchase_and_is_not_added_into()
+    {
+        // Confirm, then count the shelf (6 — the receipt's eggs included), then track the line: adding 2
+        // would be eggs bought once counted twice, and the receipt's removal would refuse to take them back.
+        var eggs = await SeedProduct("Eggs", p => p.TrackQuantity = true);
+        var removed = Line("Eggs");
+        removed.Quantity = 2;
+        var (receiptId, lineId) = await ConfirmWithOneLineRemoved(removed);
+        await using (var count = _db.CreateDbContext())
+        {
+            var p = await count.Products.SingleAsync(x => x.Id == eggs.Id);
+            p.QuantityOnHand = 6;
+            p.QuantityCountedAt = DateTimeOffset.Now.AddMinutes(1); // strictly after the confirm's stamp
+            await count.SaveChangesAsync();
+        }
+
+        await _service.TrackAsync(lineId);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(6m, (await db.Products.SingleAsync(p => p.Id == eggs.Id)).QuantityOnHand);
+        // …and the purchase is still recorded: the count is about the shelf, the purchase about the trip.
+        Assert.Equal(receiptId, (await db.PurchaseEvents.SingleAsync(p => p.ProductId == eggs.Id)).ReceiptId);
+    }
+
+    [Fact]
+    public async Task A_removed_lines_raw_fields_are_cleaned_and_pack_checked_as_a_confirm_would()
+    {
+        // A ✕'d line never went through the confirm's cleaning or its pack-misread stamp.
+        var removed = Line("Toilet Paper", "CHARMIN 12 ROLL");
+        removed.Brand = "   ";
+        removed.Size = " 12 ct ";
+        removed.Quantity = 12;
+        var (_, lineId) = await ConfirmWithOneLineRemoved(removed);
+
+        await _service.TrackAsync(lineId);
+
+        await using var db = _db.CreateDbContext();
+        var buy = await db.PurchaseEvents.SingleAsync(p => p.Product!.Name == "Toilet Paper");
+        Assert.Null(buy.Brand);
+        Assert.Equal("12 ct", buy.Size);
+        var line = await db.ReceiptLines.SingleAsync(l => l.Id == lineId);
+        Assert.Null(line.Brand);
+        Assert.Equal("12 ct", line.Size);
+        Assert.NotEqual(QuantityFlag.None, line.QuantityFlag); // "12 × 12 ct" — the pack? chip shows
+    }
+
+    [Fact]
+    public async Task Tracking_teaches_the_merchant_alias_a_reviewed_confirm_would()
+    {
+        var (receiptId, lineId) = await ConfirmWithOneLineRemoved(Line("Dragonfruit Salsa", "DRAGON SALSA"));
+
+        var outcome = await _service.TrackAsync(lineId);
+
+        await using var db = _db.CreateDbContext();
+        var alias = await db.ProductAliases.SingleAsync(a => a.RawText == "DRAGON SALSA");
+        Assert.Equal("Walmart", alias.Merchant);
+        Assert.Equal(outcome.ProductId, alias.ProductId);
+        Assert.Equal(receiptId, alias.TaughtByReceiptId); // so removing the receipt unteaches it
+    }
+
+    [Fact]
+    public async Task An_alias_the_merchant_already_has_for_the_text_is_left_alone()
+    {
+        var other = await SeedProduct("Salsa Verde");
+        await using (var seed = _db.CreateDbContext())
+        {
+            seed.ProductAliases.Add(new ProductAlias { Merchant = "Walmart", RawText = "DRAGON SALSA", ProductId = other.Id });
+            await seed.SaveChangesAsync();
+        }
+        var (_, lineId) = await ConfirmWithOneLineRemoved(Line("Dragonfruit Salsa", "DRAGON SALSA"));
+
+        await _service.TrackAsync(lineId);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(other.Id, (await db.ProductAliases.SingleAsync(a => a.RawText == "DRAGON SALSA")).ProductId);
     }
 
     // --- refusals write nothing ----------------------------------------------
@@ -253,6 +340,173 @@ public class ReceiptLineProductServiceTests : IDisposable
         Assert.Equal(ReceiptLineProductService.Status.NotFound, (await _service.TrackAsync(424242)).Status);
     }
 
+    [Fact]
+    public async Task A_receipt_from_before_purchase_provenance_refuses_so_its_removal_cant_strand_purchases()
+    {
+        // A pre-provenance confirm: one linked line whose purchase names no receipt, one line ✕'d out.
+        // Stamping the tracked purchase would make the receipt look removable, and removing it would then
+        // leave the milk purchase behind with no receipt.
+        var milk = await SeedProduct("Whole Milk");
+        int lineId;
+        await using (var db = _db.CreateDbContext())
+        {
+            var removed = Line("Dragonfruit Salsa");
+            db.Receipts.Add(new Receipt
+            {
+                Merchant = "Walmart", ImagePath = "legacy", PurchasedAt = Bought, Status = ReceiptStatus.Confirmed,
+                Lines = [new ReceiptLine { RawText = "GV MILK", NormalizedName = "Whole Milk", ProductId = milk.Id }, removed],
+            });
+            db.PurchaseEvents.Add(new PurchaseEvent { ProductId = milk.Id, PurchasedAt = Bought, Quantity = 1 });
+            await db.SaveChangesAsync();
+            lineId = removed.Id;
+        }
+
+        var outcome = await _service.TrackAsync(lineId);
+
+        Assert.Equal(ReceiptLineProductService.Status.Untraceable, outcome.Status);
+        await AssertNothingWritten(lineId);
+    }
+
+    [Fact]
+    public async Task A_second_tap_that_raced_past_the_check_rolls_back_whole_and_reports_the_winner()
+    {
+        // Both taps read the line as unlinked; the other one commits its link between this one's read and
+        // its write. Forced deterministically: the interceptor links the line from a second context just
+        // before this track loads the catalog — after its own unlinked check, before its transaction.
+        using var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        var plain = new DbContextOptionsBuilder<ShelfAwareDbContext>().UseSqlite(conn).Options;
+        using (var schema = new ShelfAwareDbContext(plain)) schema.Database.EnsureCreated();
+        var factory = new OptionsFactory(plain);
+
+        int lineId, winnerId;
+        await using (var seed = await factory.CreateDbContextAsync())
+        {
+            var winner = new Product { Name = "Dragonfruit Salsa" };
+            var line = Line("Dragonfruit Salsa");
+            seed.Products.Add(winner);
+            seed.Receipts.Add(new Receipt
+            {
+                Merchant = "Walmart", ImagePath = "race", PurchasedAt = Bought, Status = ReceiptStatus.Confirmed,
+                Lines = [line],
+            });
+            await seed.SaveChangesAsync();
+            (lineId, winnerId) = (line.Id, winner.Id);
+        }
+        var racing = new OptionsFactory(new DbContextOptionsBuilder<ShelfAwareDbContext>().UseSqlite(conn)
+            .AddInterceptors(new BeforeProductsLoad(async ct =>
+            {
+                await using var other = await factory.CreateDbContextAsync(ct);
+                await other.ReceiptLines.Where(l => l.Id == lineId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(l => l.ProductId, winnerId), ct);
+            })).Options);
+
+        var outcome = await new ReceiptLineProductService(racing, UndoTesting.Log(factory)).TrackAsync(lineId);
+
+        Assert.Equal(ReceiptLineProductService.Status.AlreadyLinked, outcome.Status);
+        Assert.Equal(winnerId, outcome.ProductId);
+        await using var db = await factory.CreateDbContextAsync();
+        Assert.Empty(await db.PurchaseEvents.ToListAsync());   // the loser's purchase rolled back
+        Assert.Empty(await db.ProductAliases.ToListAsync());   // …and its alias
+        Assert.Empty(await db.ActivityEntries.ToListAsync());  // …and no undo entry claims it happened
+    }
+
+    // --- undo from /history ---------------------------------------------------
+
+    private async Task<int> LatestEntryId()
+    {
+        await using var db = _db.CreateDbContext();
+        return (await db.ActivityEntries.OrderByDescending(e => e.Id).FirstAsync()).Id;
+    }
+
+    [Fact]
+    public async Task Undoing_a_created_product_unlinks_the_line_and_removes_what_the_track_made()
+    {
+        var (_, lineId) = await ConfirmWithOneLineRemoved(Line("Dragonfruit Salsa", "DRAGON SALSA"));
+        await _service.TrackAsync(lineId);
+        var entryId = await LatestEntryId();
+        await using (var check = _db.CreateDbContext())
+            Assert.Equal("Created Dragonfruit Salsa from a receipt line",
+                (await check.ActivityEntries.SingleAsync(e => e.Id == entryId)).Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+
+        await AssertNothingWritten(lineId);
+        await using var db = _db.CreateDbContext();
+        Assert.Null(await db.Products.FirstOrDefaultAsync(p => p.Name == "Dragonfruit Salsa"));
+        Assert.Null(await db.ProductAliases.FirstOrDefaultAsync(a => a.RawText == "DRAGON SALSA"));
+    }
+
+    [Fact]
+    public async Task Undoing_a_link_takes_back_the_purchase_and_the_count_but_keeps_the_product()
+    {
+        var eggs = await SeedProduct("Eggs", p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 3;
+            p.QuantityCountedAt = DateTimeOffset.Now.AddDays(-30);
+        });
+        var removed = Line("Eggs");
+        removed.Quantity = 2;
+        var (_, lineId) = await ConfirmWithOneLineRemoved(removed);
+        await _service.TrackAsync(lineId);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(await LatestEntryId()));
+
+        await AssertNothingWritten(lineId);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(3m, (await db.Products.SingleAsync(p => p.Id == eggs.Id)).QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task Undoing_keeps_a_created_product_another_line_has_since_tracked_as()
+    {
+        // Two removed lines with one name: the first creates the product, the second tracks as it. Undoing
+        // the first must not delete a product the second line still points at.
+        int receiptId;
+        await using (var db = _db.CreateDbContext())
+        {
+            var receipt = new Receipt
+            {
+                Merchant = "Walmart", ImagePath = "two",
+                Lines = [new ReceiptLine { RawText = "GV MILK", NormalizedName = "Whole Milk" }, Line("Salsa", "SALSA A"), Line("salsa", "SALSA B")],
+            };
+            db.Receipts.Add(receipt);
+            await db.SaveChangesAsync();
+            receiptId = receipt.Id;
+        }
+        await new ReceiptConfirmationService(_db, UndoTesting.Log(_db)).ConfirmAsync(receiptId, Bought,
+            [new("GV MILK", "Whole Milk", null, null, null, 1, Category.Dairy, [], 0)], writeAliases: true);
+        List<int> lineIds;
+        await using (var db = _db.CreateDbContext())
+            lineIds = await db.ReceiptLines.Where(l => l.ProductId == null).OrderBy(l => l.Id).Select(l => l.Id).ToListAsync();
+        var created = await _service.TrackAsync(lineIds[0]);
+        var firstEntry = await LatestEntryId();
+        Assert.Equal(ReceiptLineProductService.Status.Linked, (await _service.TrackAsync(lineIds[1])).Status);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(firstEntry));
+
+        await using var check = _db.CreateDbContext();
+        Assert.NotNull(await check.Products.FirstOrDefaultAsync(p => p.Id == created.ProductId));
+        Assert.Equal(created.ProductId, (await check.ReceiptLines.SingleAsync(l => l.Id == lineIds[1])).ProductId);
+        Assert.Null((await check.ReceiptLines.SingleAsync(l => l.Id == lineIds[0])).ProductId);
+    }
+
+    [Fact]
+    public async Task Undoing_after_the_purchase_quantity_was_corrected_is_superseded()
+    {
+        var (_, lineId) = await ConfirmWithOneLineRemoved(Line("Dragonfruit Salsa"));
+        var outcome = await _service.TrackAsync(lineId);
+        await using (var edit = _db.CreateDbContext())
+        {
+            var buy = await edit.PurchaseEvents.SingleAsync(p => p.ProductId == outcome.ProductId);
+            buy.Quantity = 3;
+            await edit.SaveChangesAsync();
+        }
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(await LatestEntryId()));
+    }
+
     // --- the receipt's removal still unwinds everything ----------------------
 
     [Fact]
@@ -302,5 +556,30 @@ public class ReceiptLineProductServiceTests : IDisposable
         Assert.Null((await db.ReceiptLines.SingleAsync(l => l.Id == lineId)).ProductId);
         // Only the kept line's purchase exists — the refused line recorded none.
         Assert.Equal(1, await db.PurchaseEvents.CountAsync());
+    }
+
+    private sealed class OptionsFactory(DbContextOptions<ShelfAwareDbContext> options) : IHouseholdDbFactory
+    {
+        public Task<ShelfAwareDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ShelfAwareDbContext(options) { HouseholdId = "hh-test", MemberId = "member-test" });
+    }
+
+    /// <summary>Runs <paramref name="race"/> once, just before the first query that reads the Products
+    /// table — the moment between a track's "is the line still unlinked?" read and its write.</summary>
+    private sealed class BeforeProductsLoad(Func<CancellationToken, Task> race) : DbCommandInterceptor
+    {
+        private bool _fired;
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_fired && command.CommandText.Contains("FROM \"Products\""))
+            {
+                _fired = true;
+                await race(cancellationToken);
+            }
+            return result;
+        }
     }
 }
