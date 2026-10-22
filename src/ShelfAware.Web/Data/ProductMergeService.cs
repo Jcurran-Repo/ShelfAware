@@ -29,8 +29,11 @@ namespace ShelfAware.Web.Data;
 /// </summary>
 public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog activityLog)
 {
+    /// <summary><see cref="Summary"/> is the undo entry's own line ("Merged A into B", "Merged A and B as C") —
+    /// the one sentence for what this merge did, so an inline notice says exactly what /history will.</summary>
     public sealed record Result(
-        bool Ok, string Message, int MovedPurchases = 0, int RelinkedIngredients = 0, int UndoEntryId = 0);
+        bool Ok, string Message, int MovedPurchases = 0, int RelinkedIngredients = 0, int UndoEntryId = 0,
+        string Summary = "");
 
     public async Task<Result> MergeAsync(
         int sourceId, int targetId, string? varietyForMoved = null, string? renameTo = null,
@@ -143,7 +146,12 @@ public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog act
         if (newName is not null)
         {
             var renamed = await ProductRenameService.RenameOnAsync(db, targetId, newName, cancellationToken);
-            if (!renamed.Ok) return new(false, renamed.Message); // tx disposes uncommitted ⇒ the merge rolls back
+            // tx disposes uncommitted ⇒ the merge rolls back. A taken name is reworded for THIS action: the
+            // rename's own "(renames can't merge products)" reads as a contradiction mid-merge.
+            if (!renamed.Ok)
+                return new(false, renamed.TakenBy is { } taken
+                    ? $"\"{taken}\" is already another product — pick a different name, or merge with it from its own page."
+                    : renamed.Message);
             targetNameBefore = renamed.OldName;
         }
 
@@ -165,7 +173,7 @@ public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog act
 
         var movedCount = movedPurchaseIds.Count;
         return new(true, $"Merged into {target.Name}: {movedCount} purchase{(movedCount == 1 ? "" : "s")} moved.",
-            movedCount, relinkedIds.Count, entry.Id);
+            movedCount, relinkedIds.Count, entry.Id, entry.Summary);
     }
 
     /// <summary>

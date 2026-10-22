@@ -46,8 +46,8 @@
                 <p class="nudge-line">@NudgeMoods.Line(n.Mood)</p>
                 <p class="nudge-pair"><strong>@n.Pair.LowerName</strong> and <strong>@n.Pair.HigherName</strong> look like the same thing — want to roll them into one? Keep:</p>
                 <div class="nudge-actions">
-                    <button class="secondary" aria-label="Keep @n.Pair.LowerName and merge @n.Pair.HigherName into it" @onclick="() => MergeKeeping(n.Pair.LowerId, n.Pair.LowerName, n.Pair.HigherId, n.Pair.HigherName)" disabled="@nudgeBusy">@n.Pair.LowerName</button>
-                    <button class="secondary" aria-label="Keep @n.Pair.HigherName and merge @n.Pair.LowerName into it" @onclick="() => MergeKeeping(n.Pair.HigherId, n.Pair.HigherName, n.Pair.LowerId, n.Pair.LowerName)" disabled="@nudgeBusy">@n.Pair.HigherName</button>
+                    <button class="secondary" aria-label="Keep @n.Pair.LowerName and merge @n.Pair.HigherName into it" @onclick="() => MergeKeeping(n.Pair.LowerId, n.Pair.HigherId)" disabled="@nudgeBusy">@n.Pair.LowerName</button>
+                    <button class="secondary" aria-label="Keep @n.Pair.HigherName and merge @n.Pair.LowerName into it" @onclick="() => MergeKeeping(n.Pair.HigherId, n.Pair.LowerId)" disabled="@nudgeBusy">@n.Pair.HigherName</button>
                     @if (renamingPair != (n.Pair.LowerId, n.Pair.HigherId))
                     {
                         <button class="secondary nudge-new-name" aria-label="Merge @n.Pair.LowerName and @n.Pair.HigherName under a new name" @onclick="() => StartRename(n)" disabled="@nudgeBusy">A new name…</button>
@@ -61,9 +61,8 @@
                        survivor in the same step. *@
                     <form class="nudge-rename" @onsubmit="() => MergeRenaming(n)" @onsubmit:preventDefault>
                         <label>
-                            Call it
-                            <input @ref="renameInput" @bind="renameDraft" @bind:event="oninput"
-                                   aria-label="New name for @n.Pair.LowerName and @n.Pair.HigherName" placeholder="e.g. Brioche Bread" />
+                            <span>Call it<span class="visually-hidden"> — the new name for @n.Pair.LowerName and @n.Pair.HigherName</span></span>
+                            <input @ref="renameInput" @bind="renameDraft" @bind:event="oninput" placeholder="e.g. Brioche Bread" />
                         </label>
                         <button type="submit" disabled="@(nudgeBusy || string.IsNullOrWhiteSpace(renameDraft))">Merge</button>
                         <button type="button" class="linkish" @onclick="CancelRename" disabled="@nudgeBusy">Cancel</button>
@@ -308,16 +307,17 @@ else
     // Merge a lookalike pair the gentle way: the user picks which name to KEEP, and the other folds into it
     // through the ONE undoable merge path (ProductMergeService). The result carries an inline ↩ Undo — the
     // SAME reversal /history runs — so a wrong guess is one tap back.
-    private async Task MergeKeeping(int keepId, string keepName, int dropId, string dropName)
+    private async Task MergeKeeping(int keepId, int dropId)
     {
         if (nudgeBusy) return;
         nudgeBusy = true;
         nudgeError = null;
+        CancelRename(); // a different answer supersedes an open "A new name…" form
         try
         {
             var result = await Merge.MergeAsync(sourceId: dropId, targetId: keepId);
             if (result.Ok)
-                mergedNotice = (result.UndoEntryId, $"Merged {dropName} into {keepName}.");
+                mergedNotice = (result.UndoEntryId, $"{result.Summary}."); // the history line — one sentence, one place
             else
                 nudgeError = result.Message;
             await LoadAsync();
@@ -357,11 +357,12 @@ else
         nudgeError = null;
         try
         {
-            var newName = renameDraft.Trim();
-            var result = await Merge.MergeAsync(sourceId: n.Pair.HigherId, targetId: n.Pair.LowerId, renameTo: newName);
+            var result = await Merge.MergeAsync(sourceId: n.Pair.HigherId, targetId: n.Pair.LowerId, renameTo: renameDraft);
             if (result.Ok)
             {
-                mergedNotice = (result.UndoEntryId, $"Merged {n.Pair.LowerName} and {n.Pair.HigherName} as {newName}.");
+                // The history line, not a sentence of our own: if the typed name was the kept one's already, the
+                // service did a plain merge, and the notice must say so.
+                mergedNotice = (result.UndoEntryId, $"{result.Summary}.");
                 CancelRename();
             }
             else
@@ -385,6 +386,7 @@ else
         nudgeBusy = true;
         nudgeError = null;
         mergedNotice = null; // a new action supersedes an earlier merge's inline notice (the dashboard pattern)
+        CancelRename();      // …and an open "A new name…" form
         try
         {
             await Nudges.DismissAsync(n.Pair.LowerId, n.Pair.HigherId, DateTimeOffset.Now);
@@ -407,6 +409,7 @@ else
         nudgeBusy = true;
         nudgeError = null;
         mergedNotice = null; // a new action supersedes an earlier merge's inline notice (the dashboard pattern)
+        CancelRename();      // …and an open "A new name…" form
         try
         {
             await Nudges.DismissClusterAsync(k.Cluster.Head, DateTimeOffset.Now);

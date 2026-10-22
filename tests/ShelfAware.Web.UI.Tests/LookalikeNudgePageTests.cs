@@ -112,7 +112,8 @@ public class LookalikeNudgePageTests : PageTestContext
         cut.WaitForAssertion(() =>
         {
             Assert.Empty(cut.FindAll(".nudge"));
-            Assert.Contains("Merged Artesano Brioche Bread and Brioche Bread Loaf as Brioche Bread",
+            // The history entry's own line — the card doesn't compose a second sentence for the same merge.
+            Assert.Contains("Merged Brioche Bread Loaf and Artesano Brioche Bread as Brioche Bread",
                 cut.Find(".nudge-done").TextContent);
         });
         await using (var raw = Db.CreateUnscopedContext())
@@ -127,6 +128,24 @@ public class LookalikeNudgePageTests : PageTestContext
         await using var db = Db.CreateUnscopedContext();
         Assert.Equal("Artesano Brioche Bread", (await db.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == breadId)).Name);
         Assert.NotNull(await db.Products.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Name == "Brioche Bread Loaf"));
+    }
+
+    [Fact]
+    public void Picking_a_name_button_closes_an_open_new_name_form_for_good()
+    {
+        SeedLookalikePair();
+        var cut = RenderList();
+        cut.WaitForState(() => cut.FindAll(".nudge").Count > 0);
+
+        cut.Find(".nudge-new-name").Click();
+        cut.FindAll(".nudge-actions button").Single(b => b.TextContent.Trim() == "Artesano Brioche Bread").Click();
+        cut.WaitForState(() => cut.FindAll(".nudge-done").Count == 1);
+
+        // Undo brings the card back as it first was — not with the abandoned form still open on it.
+        cut.Find(".nudge-done button").Click();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".nudge")));
+        Assert.Empty(cut.FindAll(".nudge-rename"));
+        Assert.Single(cut.FindAll(".nudge-new-name"));
     }
 
     [Fact]
@@ -147,7 +166,7 @@ public class LookalikeNudgePageTests : PageTestContext
 
         cut.WaitForAssertion(() =>
         {
-            Assert.Contains("already exists", cut.Find("[role=alert]").TextContent);
+            Assert.Contains("\"Sourdough\" is already another product", cut.Find("[role=alert]").TextContent);
             Assert.Single(cut.FindAll(".nudge-rename"));                       // the form stays open to fix it
         });
         await using var db = Db.CreateUnscopedContext();

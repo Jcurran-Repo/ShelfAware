@@ -153,11 +153,15 @@ public sealed class ProductsMergedHandler : UndoHandler<ProductsMergedPayload>
 
         // A merge that renamed the survivor gives it its old name back first — through the SAME RenameOnAsync
         // the forward merge used, so the recipe links follow the name back and the taken-check still guards.
-        // Only if nobody has renamed it since (theirs wins, like the tracked flag below), and tolerant like the
-        // rest of this undo: a refused rename-back (the old name is taken now) leaves the name and un-merges anyway.
-        // Runs before the link step below, which keys on the target's CURRENT name.
+        // Only if nobody has renamed it since (theirs wins, like the tracked flag below). A REFUSED rename-back
+        // (another product has taken the old name since) refuses the whole undo: reporting Done over a
+        // survivor still wearing the merge's name would claim a restore that didn't happen. Runs before the
+        // link step below, which keys on the target's CURRENT name.
         if (p.TargetNameBefore is { } nameBefore && string.Equals(target.Name, p.TargetName, StringComparison.Ordinal))
-            await ProductRenameService.RenameOnAsync(db, target.Id, nameBefore, ct);
+        {
+            var renamedBack = await ProductRenameService.RenameOnAsync(db, target.Id, nameBefore, ct);
+            if (!renamedBack.Ok) return UndoResult.Superseded;
+        }
 
         // Re-point the recipe links the merge moved, back to the source's name — but only the ones still
         // pointing at the target's identity (one re-pointed elsewhere by a later rename/merge is left alone).
