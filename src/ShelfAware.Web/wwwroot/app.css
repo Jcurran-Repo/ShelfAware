@@ -264,7 +264,10 @@ body {
     overflow-y: auto;
 }
 
-.sidebar nav a {
+/* A rail item: a page link, or a section's dropdown summary (NavGroup.razor) — one definition so the
+   two always line up. */
+.sidebar nav a,
+.nav-group-label {
     display: block;
     padding: 0.5rem 0.6rem;
     border-radius: 6px;
@@ -275,7 +278,8 @@ body {
     white-space: nowrap;
 }
 
-.sidebar nav a:hover {
+.sidebar nav a:hover,
+.nav-group-label:hover {
     background: var(--surface-alt);
     color: var(--accent-ink);
 }
@@ -289,28 +293,55 @@ body {
     box-shadow: inset 3px 0 0 var(--accent);
 }
 
-/* A section of the rail: its pages under a small heading. The heading is decoration for sighted
-   readers; the group carries the same name for assistive tech (aria-label in MainLayout). */
-.nav-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    margin-top: 0.4rem;
+/* A section of the rail, as a dropdown of its pages (NavGroup.razor). The summary is styled as a rail
+   item (above) plus a chevron that turns when the group opens; the group the visitor is in opens itself
+   and its summary takes the accent ink. Its pages sit indented beneath it. Spacing goes on the children,
+   not as a flex gap: older engines can't make <details> a flex container. An open group also keeps a
+   little space after it, so a lone link that follows (Settings) doesn't read as its last page. */
+.sidebar nav .nav-group > a {
+    margin-top: 0.15rem;
+    padding-left: 1.4rem;
 }
 
-/* A one-page section after a group (Settings after Insights) gets the same gap, so it doesn't read
-   as the group's last page. */
-.nav-group + a {
-    margin-top: 0.4rem;
+.nav-group[open] {
+    margin-bottom: 0.4rem;
 }
 
 .nav-group-label {
-    padding: 0 0.6rem 0.15rem;
-    color: var(--ink-soft);
-    font-size: 0.72rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    list-style: none;
+}
+
+.nav-group-label::-webkit-details-marker {
+    display: none;
+}
+
+.nav-group-label::after {
+    content: "";
+    width: 0.45rem;
+    height: 0.45rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s ease;
+}
+
+.nav-group[open] > .nav-group-label::after {
+    transform: rotate(45deg);
+}
+
+.nav-group-label.here {
+    color: var(--accent-ink);
     font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nav-group-label::after {
+        transition: none;
+    }
 }
 
 /* A menu section's pages, as a tab strip across the top of the content column (SectionTabs.razor).

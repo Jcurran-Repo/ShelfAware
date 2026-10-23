@@ -1,0 +1,45 @@
+@implements IDisposable
+@inject NavigationManager Nav
+
+@* One menu section as a dropdown: a native <details> disclosure, so the browser supplies the button
+   role, the expanded state and Enter/Space toggling. The section the visitor is in opens itself, and
+   the one they leave closes. Blazor only re-applies `open` when that answer changes, so any other group
+   the visitor opens or closes by hand stays as they left it. A collapsed summary still says, to a
+   screen reader too, that the current page is inside it. *@
+<details class="nav-group" open="@here">
+    @* Toggling must not bubble to the rail's click handler, which folds the phone drawer. *@
+    <summary class="@(here ? "nav-group-label here" : "nav-group-label")" @onclick:stopPropagation="true">
+        <span>@Section.Label</span>
+        @if (here)
+        {
+            <span class="visually-hidden">, current section</span>
+        }
+    </summary>
+    @* `entry`, not `page`: Razor reads inline `@page.` as the @page directive. *@
+    @foreach (var entry in Section.Pages)
+    {
+        <SiteNavLink Page="@entry" />
+    }
+</details>
+
+@code {
+    [Parameter, EditorRequired] public SiteNav.Section Section { get; set; } = default!;
+
+    private bool here;
+
+    protected override void OnInitialized() => Nav.LocationChanged += OnLocationChanged;
+
+    protected override void OnParametersSet() => here = Section.Contains(SiteNav.PathOf(Nav, Nav.Uri));
+
+    // A render failure still reaches the renderer's own error handling (it logs and ends the circuit);
+    // the discarded task only carries the hop onto the renderer's thread.
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        var next = Section.Contains(SiteNav.PathOf(Nav, e.Location));
+        if (next == here) return;
+        here = next;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}

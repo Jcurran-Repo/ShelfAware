@@ -33,9 +33,9 @@
 
         @* A tap on any link both navigates and (via bubbling) folds the mobile drawer. *@
         <nav aria-label="Primary" @onclick="() => navOpen = false">
-            @* Every SiteNav page, under its section's heading when the section has more than one, so
-               each page is one tap away and the page it opens shows the rest of its section as tabs.
-               The bug form's "where" dropdown lists the same pages, so a new page appears in both or
+            @* Every SiteNav page: a one-page section is a plain link, a larger one a dropdown of its
+               pages (NavGroup), and the page a link opens shows the rest of its section as tabs. The
+               bug form's "where" dropdown lists the same pages, so a new page appears in both or
                neither. *@
             @* ⚠️ Loop variable must not be named `page` — Razor reads inline `@page.` as the @page
                DIRECTIVE (the same reserved-word class as lowercase <text>). *@
@@ -47,13 +47,7 @@
                 }
                 else
                 {
-                    <div class="nav-group" role="group" aria-label="@group.Label">
-                        <span class="nav-group-label" aria-hidden="true">@group.Label</span>
-                        @foreach (var entry in group.Pages)
-                        {
-                            <SiteNavLink Page="@entry" />
-                        }
-                    </div>
+                    <NavGroup Section="@group" />
                 }
             }
         </nav>

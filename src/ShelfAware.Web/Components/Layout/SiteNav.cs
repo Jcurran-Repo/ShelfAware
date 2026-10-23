@@ -2,9 +2,9 @@ using Microsoft.AspNetCore.Components;
 
 namespace ShelfAware.Web.Components.Layout;
 
-/// <summary>THE list of the app's top-level pages, grouped into the menu's sections. The rail lists
-/// every page under its section's heading, a section with more than one page also shows its pages as
-/// a tab strip across the top of each of them (<see cref="SectionTabs"/>), and the bug-report form's
+/// <summary>THE list of the app's top-level pages, grouped into the menu's sections. The rail shows a
+/// one-page section as a link and a larger one as a dropdown of its pages (<see cref="NavGroup"/>), each
+/// such section also shows its pages as a tab strip across the top of each of them (<see cref="SectionTabs"/>), and the bug-report form's
 /// "where" dropdown is built from the same pages — so a page added here appears in all three and they
 /// can never drift. That's the one-accessible-definition rule, applied to navigation. Order is the
 /// rail's reading order.</summary>

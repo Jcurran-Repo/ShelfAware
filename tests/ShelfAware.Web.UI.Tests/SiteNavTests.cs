@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Web;
 using Microsoft.Extensions.DependencyInjection;
 using ShelfAware.Web.Components.Layout;
 
@@ -147,5 +148,72 @@ public class SiteNavTests : BunitContext
             Assert.DoesNotContain("active", cut.Find("a").ClassList);
             Assert.False(cut.Find("a").HasAttribute("aria-current"));
         });
+    }
+
+    [Fact]
+    public void A_menu_group_is_open_on_its_own_pages_and_follows_the_visitor()
+    {
+        var nav = Services.GetRequiredService<NavigationManager>();
+        var meals = SiteNav.Sections.Single(s => s.Label == "Meals");
+        nav.NavigateTo("/journal");
+
+        var cut = Render<NavGroup>(p => p.Add(g => g.Section, meals));
+
+        Assert.True(cut.Find("details").HasAttribute("open"));
+        Assert.Equal("Meals", cut.Find("summary > span:not(.visually-hidden)").TextContent);
+        Assert.Contains("here", cut.Find("summary").ClassList);
+        // The collapsed-or-not summary tells a screen reader the current page is inside it.
+        Assert.Equal(", current section", cut.Find("summary .visually-hidden").TextContent);
+        Assert.Equal(new[] { "Grocery List", "Meal Plan", "Journal" },
+            cut.FindAll("details a").Select(a => a.TextContent.Trim()));
+
+        nav.NavigateTo("/trends");
+        cut.WaitForAssertion(() =>
+        {
+            Assert.False(cut.Find("details").HasAttribute("open"));
+            Assert.DoesNotContain("here", cut.Find("summary").ClassList);
+            Assert.Empty(cut.FindAll("summary .visually-hidden"));
+        });
+
+        nav.NavigateTo("/list");
+        cut.WaitForAssertion(() => Assert.True(cut.Find("details").HasAttribute("open")));
+    }
+
+    [Fact]
+    public void A_menu_group_starts_closed_away_from_its_pages()
+    {
+        Services.GetRequiredService<NavigationManager>().NavigateTo("/settings");
+        var insights = SiteNav.Sections.Single(s => s.Label == "Insights");
+
+        var cut = Render<NavGroup>(p => p.Add(g => g.Section, insights));
+
+        Assert.False(cut.Find("details").HasAttribute("open"));
+    }
+
+    [Fact]
+    public void Toggling_a_menu_group_does_not_reach_the_rail_click_that_folds_the_phone_drawer()
+    {
+        var meals = SiteNav.Sections.Single(s => s.Label == "Meals");
+        var railClicks = 0;
+        // The rail's <nav @onclick> closes the drawer; stand in for it with a counting parent.
+        var cut = Render(b =>
+        {
+            b.OpenElement(0, "div");
+            b.AddAttribute(1, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, () => railClicks++));
+            b.OpenComponent<NavGroup>(2);
+            b.AddAttribute(3, nameof(NavGroup.Section), meals);
+            b.CloseComponent();
+            b.CloseElement();
+        });
+
+        // The summary has no click handler of its own — the browser toggles <details> — so with the
+        // bubble stopped there is nothing left for the click to run, which bUnit reports by throwing.
+        // Without the stop it would bubble to the parent and count.
+        Assert.Throws<MissingEventHandlerException>(() => cut.Find("summary").Click());
+        Assert.Equal(0, railClicks);
+
+        // A page link inside the group still does bubble, so tapping one folds the drawer as before.
+        cut.Find("details a").Click();
+        Assert.Equal(1, railClicks);
     }
 }
