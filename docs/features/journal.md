@@ -61,6 +61,13 @@ logging into one household see two journals. That is a structural guard, not a W
 - There is no separate table: the journal is the memory, so export and delete already cover it, and
   removing every entry with a number forgets it. The page's undo uses `RestoreAsync`, which neither
   recalls nor re-stamps, so a removed entry comes back exactly as it was and can't displace a newer number.
+- **No portion, no guess** (2026-10-23, Jordan: "if i forget to say the size of a portion it should ask
+  me"). `log_meal` takes the portion in the person's own words; without one it writes nothing and tells
+  the model to ask (`AnthropicPantryChat.AskPortion`). Excused when the portion is already settled: they
+  said the calories, they named servings of a saved recipe, or the food is one they've given their own
+  number for (`MealJournal.Find`, the same match the recall uses). The prompt says a count is enough for
+  "a sandwich" but not for a drink or anything sold in sizes. The page's add-by-hand form is unaffected —
+  a person typing a food is not being guessed for.
 - Reginald is given the person's remembered foods (the 40 most recent) in the prompt and told to reuse
   those names exactly, since recall only matches the same food. For a chain's drink or menu item he is
   told to price that chain's own size and put the size he assumed in the food name — the likely cause of

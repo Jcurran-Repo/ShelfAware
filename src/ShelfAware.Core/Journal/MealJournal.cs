@@ -207,14 +207,22 @@ public static class MealJournal
             .Select(e => new RememberedCalories(Flatten(e.Food), e.Calories!.Value)),
     ];
 
+    /// <summary>The person's remembered number for <paramref name="food"/> (<see cref="FoodKey"/> match), or
+    /// null when they've never given one — what <see cref="Recall"/> applies, and what tells Reginald he
+    /// needn't ask the portion of a food the person has already priced.</summary>
+    public static RememberedCalories? Find(string food, IEnumerable<RememberedCalories> remembered)
+    {
+        var key = FoodKey(food);
+        return remembered.FirstOrDefault(r => FoodKey(r.Food) == key);
+    }
+
     /// <summary>THE override rule: a draft that carries the person's own number is written as it is; any other
     /// — an estimate, a saved recipe's figure, or no number at all — gives way to the number the person last
     /// gave for that same food. The recalled number is theirs, so it is not marked an estimate.</summary>
     public static (JournalDraft Draft, bool Recalled) Recall(JournalDraft draft, IEnumerable<RememberedCalories> remembered)
     {
         if (draft.IsOwnNumber) return (draft, false);
-        var key = FoodKey(draft.Food);
-        return remembered.FirstOrDefault(r => FoodKey(r.Food) == key) is { } hit
+        return Find(draft.Food, remembered) is { } hit
             ? (draft with { Calories = hit.Calories, CaloriesEstimated = false }, true)
             : (draft, false);
     }

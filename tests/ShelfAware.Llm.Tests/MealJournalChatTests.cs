@@ -68,7 +68,7 @@ public class MealJournalChatTests
     public async Task A_meal_is_logged_with_reginalds_estimate_marked_as_one()
     {
         var journal = new FakeMealJournal();
-        var client = Script(Responses.Call("log_meal", ("food", "2 scrambled eggs"), ("meal", "Breakfast"), ("calories", 180)));
+        var client = Script(Responses.Call("log_meal", ("food", "2 scrambled eggs"), ("meal", "Breakfast"), ("portion", "2"), ("calories", 180)));
 
         var result = await Chat(client, journal).HandleAsync("I had two scrambled eggs for breakfast");
 
@@ -99,8 +99,8 @@ public class MealJournalChatTests
         var journal = new FakeMealJournal();
         var yesterday = Today.AddDays(-1);
         var client = Script(
-            Responses.Call("log_meal", ("food", "pizza"), ("meal", "Dinner"), ("calories", 600), ("date", yesterday.ToString("yyyy-MM-dd"))),
-            Responses.Call("log_meal", ("food", "apple"), ("meal", "Snack"), ("calories", 95)));
+            Responses.Call("log_meal", ("food", "pizza"), ("meal", "Dinner"), ("portion", "2 slices"), ("calories", 600), ("date", yesterday.ToString("yyyy-MM-dd"))),
+            Responses.Call("log_meal", ("food", "apple"), ("meal", "Snack"), ("portion", "1"), ("calories", 95)));
 
         await Chat(client, journal).HandleAsync("pizza last night and an apple just now");
 
@@ -151,7 +151,7 @@ public class MealJournalChatTests
     {
         var journal = new FakeMealJournal();
         var client = Script(Responses.Call("log_meal",
-            ("food", "cake"), ("meal", "Dinner"), ("calories", 300), ("date", Today.AddDays(2).ToString("yyyy-MM-dd"))));
+            ("food", "cake"), ("meal", "Dinner"), ("portion", "1 slice"), ("calories", 300), ("date", Today.AddDays(2).ToString("yyyy-MM-dd"))));
 
         var result = await Chat(client, journal).HandleAsync("I'll have cake on Saturday");
 
@@ -205,7 +205,7 @@ public class MealJournalChatTests
         store.Recipes.Add(new RecipeRef(7, "Chicken Chili", HasSteps: true, CaloriesPerServing: 420));
         var journal = new FakeMealJournal();
         var client = Script(Responses.Call("log_meal",
-            ("food", "chili"), ("meal", "Dinner"), ("calories_stated", true), ("recipe_name", "chili")));
+            ("food", "chili"), ("meal", "Dinner"), ("portion", "a bowl"), ("calories_stated", true), ("recipe_name", "chili")));
 
         await Chat(client, journal, store).HandleAsync("I had the chicken chili");
 
@@ -220,8 +220,8 @@ public class MealJournalChatTests
         store.Recipes.Add(new RecipeRef(7, "Chicken Chili", HasSteps: true, CaloriesPerServing: null));
         var journal = new FakeMealJournal();
         var client = Script(
-            Responses.Call("log_meal", ("food", "chili"), ("meal", "Dinner"), ("calories", 500), ("recipe_name", "chicken chili")),
-            Responses.Call("log_meal", ("food", "tacos"), ("meal", "Dinner"), ("calories", 450), ("recipe_name", "fish tacos")));
+            Responses.Call("log_meal", ("food", "chili"), ("meal", "Dinner"), ("portion", "a bowl"), ("calories", 500), ("recipe_name", "chicken chili")),
+            Responses.Call("log_meal", ("food", "tacos"), ("meal", "Dinner"), ("portion", "3"), ("calories", 450), ("recipe_name", "fish tacos")));
 
         await Chat(client, journal, store).HandleAsync("chili and tacos");
 
@@ -258,6 +258,62 @@ public class MealJournalChatTests
         await Chat(client, journal, store).HandleAsync("all the party mix");
 
         Assert.Equal(2000, Assert.Single(journal.Drafts).Calories);
+    }
+
+    // --- asking the portion ---------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("  ")]
+    public async Task With_no_portion_nothing_is_logged_and_the_model_is_told_to_ask(string? portion)
+    {
+        // The 7 Brew case: "a white chocolate mocha chiller" says nothing about a 32 oz cup.
+        var journal = new FakeMealJournal();
+        var client = Script(Responses.Call("log_meal",
+            ("food", "7 Brew white chocolate mocha chiller"), ("meal", "Snack"), ("calories", 450), ("portion", portion)));
+
+        var result = await Chat(client, journal).HandleAsync("had a white chocolate mocha chiller from 7 brew");
+
+        Assert.Empty(journal.Drafts);
+        Assert.Empty(result.Actions);
+        Assert.Equal(AnthropicPantryChat.AskPortion, ToolReply(client));
+    }
+
+    [Fact]
+    public async Task A_portion_in_their_words_is_enough_to_log()
+    {
+        var journal = new FakeMealJournal();
+        var client = Script(Responses.Call("log_meal",
+            ("food", "7 Brew white chocolate mocha chiller, large 32 oz"), ("meal", "Snack"), ("calories", 900), ("portion", "large")));
+
+        await Chat(client, journal).HandleAsync("a large white chocolate mocha chiller");
+
+        Assert.Equal(900, Assert.Single(journal.Drafts).Calories);
+    }
+
+    [Fact]
+    public async Task Saying_stated_without_a_number_does_not_excuse_the_portion()
+    {
+        var journal = new FakeMealJournal();
+        var client = Script(Responses.Call("log_meal", ("food", "latte"), ("meal", "Breakfast"), ("calories_stated", true)));
+
+        await Chat(client, journal).HandleAsync("a latte");
+
+        Assert.Empty(journal.Drafts);
+        Assert.Equal(AnthropicPantryChat.AskPortion, ToolReply(client));
+    }
+
+    [Fact]
+    public async Task A_food_they_have_priced_before_needs_no_portion()
+    {
+        var journal = new FakeMealJournal();
+        journal.Entries.Add(Own("7 Brew white chocolate mocha chiller, large 32 oz", 900));
+        var client = Script(Responses.Call("log_meal",
+            ("food", "7 brew white chocolate mocha chiller, LARGE 32 oz"), ("meal", "Snack")));
+
+        await Chat(client, journal).HandleAsync("had my usual chiller");
+
+        Assert.Equal((900, false), (journal.Entries[^1].Calories, journal.Entries[^1].CaloriesEstimated));
     }
 
     // --- remembered numbers ---------------------------------------------------------------------
@@ -474,7 +530,7 @@ public class MealJournalChatTests
     public async Task A_logged_meal_is_a_write_the_household_keeps_paying_for_even_if_the_provider_drops()
     {
         var charging = new ChargingChatClient(new FakeChatClient(
-            () => Responses.ToolCalls(Responses.Call("log_meal", ("food", "toast"), ("meal", "Breakfast"), ("calories", 80))),
+            () => Responses.ToolCalls(Responses.Call("log_meal", ("food", "toast"), ("meal", "Breakfast"), ("portion", "2 slices"), ("calories", 80))),
             () => throw new HttpRequestException("the provider went away")));
 
         var result = await Chat(charging, new FakeMealJournal()).HandleAsync("toast for breakfast");
@@ -489,7 +545,7 @@ public class MealJournalChatTests
     {
         var charging = new ChargingChatClient(new FakeChatClient(
             () => Responses.ToolCalls(Responses.Call("log_meal",
-                ("food", "cake"), ("meal", "Dinner"), ("date", Today.AddDays(3).ToString("yyyy-MM-dd")))),
+                ("food", "cake"), ("meal", "Dinner"), ("portion", "1 slice"), ("date", Today.AddDays(3).ToString("yyyy-MM-dd")))),
             () => throw new HttpRequestException("the provider went away")));
 
         await Chat(charging, new FakeMealJournal()).HandleAsync("cake next week");

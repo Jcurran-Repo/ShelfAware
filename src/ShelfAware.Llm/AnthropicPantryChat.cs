@@ -37,6 +37,11 @@ public class AnthropicPantryChat : IPantryChat
     /// <summary>How many of the person's remembered foods the prompt lists — the most recent, which are the
     /// ones they are likeliest to have again; an older one still applies when the model names it exactly.</summary>
     private const int MaxRememberedInPrompt = 40;
+
+    /// <summary>What <c>log_meal</c> hands back when the user gave no portion — not a failure, a question for
+    /// them, so nothing is written and the model asks.</summary>
+    internal const string AskPortion =
+        "Not logged yet: they didn't say how much. Ask them the portion or size (e.g. small, medium or large; how many; a cup or a bowl), then call log_meal again with it in 'portion'. Don't guess one.";
     private static readonly string SystemPrompt = ReadEmbedded("Prompts.pantry-chat-system.txt");
 
     private readonly IChatClient _chat;
@@ -774,6 +779,13 @@ public class AnthropicPantryChat : IPantryChat
                 // person said themselves outranks both — it is theirs, and the recipe's is an estimate.
                 int? calories = Int("calories");
                 var stated = calories is not null && Bool("calories_stated") == true;
+
+                // No portion, no guess: a size the model assumes is how a 32 oz drink got priced as a
+                // 16 oz one. Asked instead — unless the person's number already settles it: they said the
+                // calories, they named servings of a saved recipe, or they've priced this very food before.
+                if (string.IsNullOrWhiteSpace(Str("portion")) && Dec("servings") is null && !stated
+                    && MealJournal.Find(food, await _journal.RememberedAsync(ct)) is null)
+                    return (AskPortion, false);
                 var note = "";
                 if (!stated && Str("recipe_name") is { Length: > 0 } recipeName)
                 {
@@ -1018,8 +1030,9 @@ public class AnthropicPantryChat : IPantryChat
                 """
                 {
                   "food": { "type": "string", "description": "What was eaten, with the portion as they said it (e.g. '2 scrambled eggs', 'turkey sandwich'). For a drink or a chain's menu item, include the size you priced (e.g. '7 Brew Blondie, medium 24 oz') so they can see it. If it is one of the foods listed with their own calorie number, use that name exactly." },
+                  "portion": { "type": "string", "description": "How much, in the user's own words ('large', '2', 'a bowl', '16 oz'). ONLY what they said — never one you assume. Omit if they gave none; the tool will tell you to ask." },
                   "meal": { "type": "string", "enum": ["Breakfast","Lunch","Dinner","Snack"], "description": "The meal they name; if they don't name one, infer it from their words or the time now." },
-                  "calories": { "type": "integer", "description": "Calories for the portion eaten: the number they stated, or else your best estimate for that portion (assume one typical serving when no portion is given — for a named chain, that chain's own regular size and recipe, not a generic cup). Omit only if you genuinely cannot estimate." },
+                  "calories": { "type": "integer", "description": "Calories for the portion eaten: the number they stated, or else your best estimate for the portion they said (for a named chain, that chain's own size and recipe, not a generic cup). Omit only if you genuinely cannot estimate." },
                   "calories_stated": { "type": "boolean", "description": "true ONLY when the user said the calorie number themselves. Default false (an estimate)." },
                   "date": { "type": "string", "description": "YYYY-MM-DD when they ate it, if not today ('yesterday', 'Tuesday'). Omit for today." },
                   "recipe_name": { "type": "string", "description": "If the food is one of their SAVED recipes, its name — the recipe's own calorie figure is then used." },

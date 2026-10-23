@@ -503,6 +503,16 @@ public class MealJournalTests
     }
 
     [Fact]
+    public void Find_matches_a_food_by_its_key_and_otherwise_finds_nothing()
+    {
+        RememberedCalories[] remembered = [new("Apple", 95), new("7 Brew Blondie", 480)];
+
+        Assert.Equal(new RememberedCalories("7 Brew Blondie", 480), MealJournal.Find(" 7 brew  BLONDIE", remembered));
+        Assert.Null(MealJournal.Find("Pretzel", remembered));
+        Assert.Null(MealJournal.Find("Apple", []));
+    }
+
+    [Fact]
     public void A_food_with_nothing_remembered_is_written_as_it_came()
     {
         var draft = D("Pretzel", 380);
