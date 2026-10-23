@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq.Expressions;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.MealPlanning;
 
@@ -45,6 +46,9 @@ public sealed record CalorieTotal(int Calories, int Counted, int Uncounted, bool
         ? null
         : $"{Uncounted} {(Uncounted == 1 ? "item has" : "items have")} no calorie count";
 }
+
+/// <summary>A food the person has given their own calorie number for, as they last wrote it, and that number.</summary>
+public sealed record RememberedCalories(string Food, int Calories);
 
 /// <summary>One meal on one day: its slot, the foods in it in the order they were logged, and their total.</summary>
 public sealed record JournalMeal(MealSlot Slot, IReadOnlyList<JournalEntry> Items, CalorieTotal Total);
@@ -155,6 +159,64 @@ public static class MealJournal
         if (calories > MaxCalories) return $"{Number(calories.Value)} calories is more than one entry can hold (the most is {Number(MaxCalories)}) — split it into the foods it was.";
         if (eatenOn > today) return "That day hasn't happened yet — the journal only records what was already eaten.";
         return null;
+    }
+
+    /// <summary>The entry's calories are the person's own — a number they said or typed, or one they corrected
+    /// — rather than an estimate or a blank. An expression so the database read that narrows to these rows and
+    /// <see cref="IsOwnNumber"/> are one definition, not a predicate and its hand-copied SQL twin.</summary>
+    public static readonly Expression<Func<JournalEntry, bool>> HasOwnNumber =
+        e => e.Calories != null && !e.CaloriesEstimated;
+
+    private static readonly Func<JournalEntry, bool> HasOwnNumberCompiled = HasOwnNumber.Compile();
+
+    /// <summary><see cref="HasOwnNumber"/> for one entry — the one reading of "theirs" that the journal remembers.</summary>
+    public static bool IsOwnNumber(JournalEntry entry) => HasOwnNumberCompiled(entry);
+
+    /// <summary>A food description on one line, its runs of spacing (newlines included) folded to single spaces —
+    /// how a remembered name is shown, so a name can never break out of the line it is listed on.</summary>
+    public static string Flatten(string food) =>
+        string.Join(' ', food.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    /// <summary>The form two descriptions of a food are compared in: case and spacing don't make it a different
+    /// food ("7 Brew  Blondie" is "7 brew blondie"); anything else — a size, a count — does, because a medium
+    /// and a large are not the same number.</summary>
+    public static string FoodKey(string food) => Flatten(food).ToLowerInvariant();
+
+    /// <summary>True when writing <paramref name="draft"/> over <paramref name="before"/> (null for a new
+    /// entry) is the person giving that food a number now: a new number of theirs, a number that was an
+    /// estimate or blank until now, or their number moved onto a different food. What stamps
+    /// <see cref="JournalEntry.CaloriesGivenAt"/> — an edit that only moves the meal or the day gives nothing.</summary>
+    public static bool GivesNumber(JournalEntry? before, JournalDraft draft) =>
+        draft.IsOwnNumber
+        && (before is null
+            || !IsOwnNumber(before)
+            || before.Calories != draft.Calories
+            || FoodKey(before.Food) != FoodKey(draft.Food));
+
+    /// <summary>Every food the person has put their own number on, once each, most recently GIVEN first
+    /// (<see cref="JournalEntry.CaloriesGivenAt"/>, so correcting last month's entry today makes today's number
+    /// the one remembered), at that number. Entries from before the stamp existed, if any are left unstamped,
+    /// sort after every stamped one, newest logged first.</summary>
+    public static IReadOnlyList<RememberedCalories> Remembered(IEnumerable<JournalEntry> history) =>
+    [
+        .. history
+            .Where(IsOwnNumber)
+            .OrderByDescending(e => e.CaloriesGivenAt)
+            .ThenByDescending(e => e.Id)
+            .DistinctBy(e => FoodKey(e.Food))
+            .Select(e => new RememberedCalories(Flatten(e.Food), e.Calories!.Value)),
+    ];
+
+    /// <summary>THE override rule: a draft that carries the person's own number is written as it is; any other
+    /// — an estimate, a saved recipe's figure, or no number at all — gives way to the number the person last
+    /// gave for that same food. The recalled number is theirs, so it is not marked an estimate.</summary>
+    public static (JournalDraft Draft, bool Recalled) Recall(JournalDraft draft, IEnumerable<RememberedCalories> remembered)
+    {
+        if (draft.IsOwnNumber) return (draft, false);
+        var key = FoodKey(draft.Food);
+        return remembered.FirstOrDefault(r => FoodKey(r.Food) == key) is { } hit
+            ? (draft with { Calories = hit.Calories, CaloriesEstimated = false }, true)
+            : (draft, false);
     }
 
     /// <summary>How a span is named, on the page's headings and in Reginald's answers alike.</summary>

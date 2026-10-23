@@ -27,6 +27,7 @@ public class MealJournalChatTests
             Drafts.Add(draft);
             if (MealJournal.Problem(draft.Food, draft.Calories, draft.EatenOn, Today) is { } problem)
                 return Task.FromResult(JournalWrite.Refused(problem));
+            (draft, var recalled) = MealJournal.Recall(draft, MealJournal.Remembered(Entries));
             var entry = new JournalEntry
             {
                 Id = Entries.Count + 1, Food = draft.Food.Trim(), Slot = draft.Slot, EatenOn = draft.EatenOn,
@@ -34,8 +35,11 @@ public class MealJournalChatTests
                 LoggedAt = DateTimeOffset.Now,
             };
             Entries.Add(entry);
-            return Task.FromResult(JournalWrite.Saved(entry));
+            return Task.FromResult(JournalWrite.Saved(entry, recalled));
         }
+
+        public Task<IReadOnlyList<RememberedCalories>> RememberedAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(MealJournal.Remembered(Entries));
 
         /// <summary>Set to play a scope with nobody signed in.</summary>
         public string? Unreadable { get; set; }
@@ -255,6 +259,88 @@ public class MealJournalChatTests
         await Chat(client, journal, store).HandleAsync("all the party mix");
 
         Assert.Equal(2000, Assert.Single(journal.Drafts).Calories);
+    }
+
+    // --- remembered numbers ---------------------------------------------------------------------
+
+    private static JournalEntry Own(string food, int calories) => new()
+    {
+        Id = 1, Food = food, Slot = MealSlot.Snack, EatenOn = Today.AddDays(-1), Calories = calories,
+        CaloriesEstimated = false, LoggedAt = DateTimeOffset.Now,
+    };
+
+    [Fact]
+    public async Task The_persons_own_numbers_are_listed_for_the_model_by_the_names_their_journal_uses()
+    {
+        var journal = new FakeMealJournal();
+        journal.Entries.Add(Own("7 Brew Blondie, medium 24 oz", 480));
+        var client = new FakeChatClient(() => Responses.Text("Hi."));
+
+        await Chat(client, journal).HandleAsync("hello");
+
+        var system = client.ReceivedMessages[0][0].Text;
+        Assert.Contains("Foods the user has given their own calorie number for", system);
+        Assert.Contains("- 7 Brew Blondie, medium 24 oz: 480 kcal", system);
+    }
+
+    [Fact]
+    public async Task With_nothing_remembered_the_prompt_lists_nothing()
+    {
+        var client = new FakeChatClient(() => Responses.Text("Hi."));
+
+        await Chat(client, new FakeMealJournal()).HandleAsync("hello");
+
+        // The standing prompt mentions the list; the list itself (its header) is only there when there is one.
+        Assert.DoesNotContain("Foods the user has given their own calorie number for", client.ReceivedMessages[0][0].Text);
+    }
+
+    [Fact]
+    public async Task A_remembered_number_outranks_the_models_estimate_and_the_model_is_told_whose_it_is()
+    {
+        var journal = new FakeMealJournal();
+        journal.Entries.Add(Own("7 Brew Blondie, medium 24 oz", 480));
+        var client = Script(Responses.Call("log_meal",
+            ("food", "7 Brew Blondie, medium 24 oz"), ("meal", "Snack"), ("calories", 240)));
+
+        await Chat(client, journal).HandleAsync("had a blondie from 7 brew");
+
+        var entry = journal.Entries[^1];
+        Assert.Equal((480, false), (entry.Calories, entry.CaloriesEstimated));
+        Assert.Contains("480 kcal (their own number from the last time they logged it).", ToolReply(client));
+        Assert.DoesNotContain("estimate", ToolReply(client));
+    }
+
+    [Fact]
+    public async Task A_remembered_number_outranks_a_saved_recipes_figure_and_says_so_instead()
+    {
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(7, "Chicken Chili", HasSteps: true, CaloriesPerServing: 420));
+        var journal = new FakeMealJournal();
+        journal.Entries.Add(Own("chili", 650));
+        var client = Script(Responses.Call("log_meal", ("food", "chili"), ("meal", "Dinner"), ("recipe_name", "chili")));
+
+        await Chat(client, journal, store).HandleAsync("I had the chili");
+
+        Assert.Equal(650, journal.Entries[^1].Calories);
+        Assert.Contains("their own number", ToolReply(client));
+        Assert.DoesNotContain("from the saved", ToolReply(client));
+    }
+
+    [Fact]
+    public async Task Servings_other_than_one_are_part_of_the_food_so_one_bowls_number_is_not_recalled_for_three()
+    {
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(7, "Chicken Chili", HasSteps: true, CaloriesPerServing: 420));
+        var journal = new FakeMealJournal();
+        journal.Entries.Add(Own("chili", 400));
+        var client = Script(
+            Responses.Call("log_meal", ("food", "chili"), ("meal", "Dinner"), ("recipe_name", "chili"), ("servings", 3)),
+            Responses.Call("log_meal", ("food", "chili"), ("meal", "Lunch"), ("recipe_name", "chili"), ("servings", 1.5)));
+
+        await Chat(client, journal, store).HandleAsync("three bowls of chili for dinner, and one and a half for lunch");
+
+        Assert.Equal([("Chicken Chili, 3 servings", 1260), ("Chicken Chili, 1.5 servings", 630)],
+            journal.Entries.Skip(1).Select(e => (e.Food, e.Calories!.Value)));
     }
 
     // --- query_journal --------------------------------------------------------------------------

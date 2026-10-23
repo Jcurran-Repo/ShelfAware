@@ -33,6 +33,11 @@ public class JournalEntry : IMemberOwned
     /// figure — rather than a number the person stated or typed. Every total that includes one says so.</summary>
     public bool CaloriesEstimated { get; set; }
 
+    /// <summary>When the person last gave this entry's number — logged it with their own, or corrected it — or
+    /// null when the number isn't theirs. Orders "the number they last gave for this food"
+    /// (<c>MealJournal.Remembered</c>) by when it was given, not when the row was first written.</summary>
+    public DateTimeOffset? CaloriesGivenAt { get; set; }
+
     /// <summary>When it was logged (not when it was eaten) — orders a day's items as they were told.</summary>
     public DateTimeOffset LoggedAt { get; set; }
 }
