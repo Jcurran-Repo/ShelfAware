@@ -109,6 +109,13 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
             .ToListAsync(cancellationToken));
     }
 
+    public async Task<JournalEntry?> GetEntryAsync(int id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        // The member filter applies to this read like every other: another person's id finds nothing.
+        return await db.JournalEntries.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id, cancellationToken);
+    }
+
     /// <summary>Correct an entry. Refused, not clamped, when the correction breaks the rule — this is a
     /// number someone typed on purpose. Gone (deleted elsewhere, or not this person's) is a refusal too.</summary>
     public async Task<JournalWrite> UpdateAsync(int id, JournalDraft draft, CancellationToken cancellationToken = default)

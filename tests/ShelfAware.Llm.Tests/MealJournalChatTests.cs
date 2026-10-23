@@ -40,6 +40,27 @@ public class MealJournalChatTests
         public Task<IReadOnlyList<RememberedCalories>> RememberedAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(MealJournal.Remembered(Entries));
 
+        public Task<JournalEntry?> GetEntryAsync(int id, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Entries.FirstOrDefault(e => e.Id == id));
+
+        public List<(int Id, JournalDraft Draft)> Updates { get; } = [];
+
+        public Task<JournalWrite> UpdateAsync(int id, JournalDraft draft, CancellationToken cancellationToken = default)
+        {
+            Updates.Add((id, draft));
+            if (MealJournal.Problem(draft.Food, draft.Calories, draft.EatenOn, Today) is { } problem)
+                return Task.FromResult(JournalWrite.Refused(problem));
+            if (Entries.FirstOrDefault(e => e.Id == id) is not { } entry)
+                return Task.FromResult(JournalWrite.Refused("That entry is no longer in your journal."));
+            var updated = new JournalEntry
+            {
+                Id = id, Food = draft.Food.Trim(), Slot = draft.Slot, EatenOn = draft.EatenOn, Calories = draft.Calories,
+                CaloriesEstimated = draft.Calories is not null && draft.CaloriesEstimated, LoggedAt = entry.LoggedAt,
+            };
+            Entries[Entries.IndexOf(entry)] = updated;
+            return Task.FromResult(JournalWrite.Saved(updated));
+        }
+
         /// <summary>Set to play a scope with nobody signed in.</summary>
         public string? Unreadable { get; set; }
 
@@ -89,7 +110,7 @@ public class MealJournalChatTests
         await Chat(client, journal).HandleAsync("a 250 calorie protein bar");
 
         Assert.False(Assert.Single(journal.Drafts).CaloriesEstimated);
-        Assert.Contains("250 kcal.", ToolReply(client));
+        Assert.Contains("[entry 1] protein bar (250 kcal) for snack on", ToolReply(client));
         Assert.DoesNotContain("estimate", ToolReply(client));
     }
 
@@ -418,7 +439,8 @@ public class MealJournalChatTests
 
         var entry = journal.Entries[^1];
         Assert.Equal((480, false), (entry.Calories, entry.CaloriesEstimated));
-        Assert.Contains("480 kcal (their own number from the last time they logged it).", ToolReply(client));
+        Assert.Contains("(480 kcal) for snack on", ToolReply(client));
+        Assert.Contains("(their own number from the last time they logged it).", ToolReply(client));
         Assert.DoesNotContain("estimate", ToolReply(client));
     }
 
@@ -455,6 +477,129 @@ public class MealJournalChatTests
             journal.Entries.Skip(1).Select(e => (e.Food, e.Calories!.Value)));
     }
 
+    // --- edit_meal -----------------------------------------------------------------------------
+
+    private static FakeMealJournal WithChiller(int calories = 450, bool estimated = true)
+    {
+        var journal = new FakeMealJournal();
+        journal.Entries.Add(new JournalEntry
+        {
+            Id = 7, Food = "7 Brew chiller, 16 oz", Slot = MealSlot.Snack, EatenOn = Today, Calories = calories,
+            CaloriesEstimated = estimated, LoggedAt = DateTimeOffset.Now,
+        });
+        return journal;
+    }
+
+    [Fact]
+    public async Task A_new_size_is_an_edit_of_the_entry_not_a_second_log()
+    {
+        var journal = WithChiller();
+        var client = Script(Responses.Call("edit_meal",
+            ("entry_id", 7), ("food", "7 Brew chiller"), ("portion", "32 oz"), ("calories", 900)));
+
+        var result = await Chat(client, journal).HandleAsync("actually it was the 32 oz");
+
+        Assert.Empty(journal.Drafts);
+        var entry = Assert.Single(journal.Entries);
+        Assert.Equal(("7 Brew chiller, 32 oz", 900, true, MealSlot.Snack, Today),
+            (entry.Food, entry.Calories, entry.CaloriesEstimated, entry.Slot, entry.EatenOn));
+        Assert.Contains("journal ✎ 7 Brew chiller, 32 oz", result.Actions);
+        Assert.Equal($"Updated [entry 7] 7 Brew chiller, 16 oz (~450 kcal) to [entry 7] 7 Brew chiller, 32 oz (~900 kcal), snack on {Today:yyyy-MM-dd} — an estimate.",
+            ToolReply(client));
+    }
+
+    [Fact]
+    public async Task A_number_they_state_for_an_entry_is_theirs()
+    {
+        var journal = WithChiller();
+        var client = Script(Responses.Call("edit_meal", ("entry_id", 7), ("calories", 500), ("calories_stated", true)));
+
+        await Chat(client, journal).HandleAsync("make that 500 calories");
+
+        var entry = Assert.Single(journal.Entries);
+        Assert.Equal(("7 Brew chiller, 16 oz", 500, false), (entry.Food, entry.Calories, entry.CaloriesEstimated));
+        Assert.EndsWith("snack on " + Today.ToString("yyyy-MM-dd") + ".", ToolReply(client));
+    }
+
+    [Fact]
+    public async Task Moving_an_entry_keeps_its_number_and_whose_it_is()
+    {
+        var journal = WithChiller(calories: 480, estimated: false);
+        var yesterday = Today.AddDays(-1);
+        var client = Script(Responses.Call("edit_meal", ("entry_id", 7), ("meal", "lunch"), ("date", yesterday.ToString("yyyy-MM-dd"))));
+
+        await Chat(client, journal).HandleAsync("that was lunch yesterday");
+
+        var entry = Assert.Single(journal.Entries);
+        Assert.Equal((MealSlot.Lunch, yesterday, 480, false), (entry.Slot, entry.EatenOn, entry.Calories, entry.CaloriesEstimated));
+    }
+
+    [Fact]
+    public async Task A_different_food_with_no_new_number_is_refused_unless_they_have_one_for_it()
+    {
+        // The old food's calories under the new food's name would be a number nobody gave.
+        var journal = WithChiller();
+        var client = Script(Responses.Call("edit_meal", ("entry_id", 7), ("portion", "32 oz"), ("food", "7 Brew chiller")));
+
+        await Chat(client, journal).HandleAsync("it was the 32");
+
+        Assert.Empty(journal.Updates);
+        Assert.StartsWith("Not changed: the food is different now", ToolReply(client));
+
+        journal.Entries.Add(new JournalEntry
+        {
+            Id = 8, Food = "7 Brew chiller, 32 oz", Slot = MealSlot.Snack, EatenOn = Today.AddDays(-3), Calories = 910,
+            LoggedAt = DateTimeOffset.Now,
+        });
+        var again = Script(Responses.Call("edit_meal", ("entry_id", 7), ("portion", "32 oz"), ("food", "7 Brew chiller")));
+
+        await Chat(again, journal).HandleAsync("it was the 32");
+
+        Assert.Equal((910, false), (journal.Entries.Single(e => e.Id == 7).Calories, journal.Entries.Single(e => e.Id == 7).CaloriesEstimated));
+    }
+
+    [Theory]
+    [InlineData(null, "Pass entry_id")]
+    [InlineData(99, "There is no entry 99 in their journal")]
+    public async Task An_edit_needs_an_entry_that_is_there(int? id, string expected)
+    {
+        var journal = WithChiller();
+        var client = Script(Responses.Call("edit_meal", ("entry_id", id), ("calories", 500)));
+
+        var result = await Chat(client, journal).HandleAsync("make it 500");
+
+        Assert.Empty(journal.Updates);
+        Assert.Empty(result.Actions);
+        Assert.StartsWith(expected, ToolReply(client));
+    }
+
+    [Theory]
+    [InlineData("meal", "Brunch", "meal must be one of")]
+    [InlineData("date", "last Tuesday", "pass it as YYYY-MM-DD")]
+    public async Task An_unreadable_meal_or_day_is_refused_rather_than_guessed(string key, string value, string expected)
+    {
+        var journal = WithChiller();
+        var client = Script(Responses.Call("edit_meal", ("entry_id", 7), (key, value)));
+
+        await Chat(client, journal).HandleAsync("move it");
+
+        Assert.Empty(journal.Updates);
+        Assert.Contains(expected, ToolReply(client));
+    }
+
+    [Fact]
+    public async Task The_write_rule_still_applies_to_an_edit()
+    {
+        var journal = WithChiller();
+        var client = Script(Responses.Call("edit_meal", ("entry_id", 7), ("date", Today.AddDays(1).ToString("yyyy-MM-dd"))));
+
+        var result = await Chat(client, journal).HandleAsync("that's for tomorrow");
+
+        Assert.Empty(result.Actions);
+        Assert.Contains("hasn't happened yet", ToolReply(client));
+        Assert.Equal(Today, Assert.Single(journal.Entries).EatenOn);
+    }
+
     // --- query_journal --------------------------------------------------------------------------
 
     [Fact]
@@ -478,16 +623,17 @@ public class MealJournalChatTests
     public async Task Asking_about_a_day_also_says_what_was_in_each_meal()
     {
         var journal = new FakeMealJournal();
-        journal.Entries.Add(new JournalEntry { Food = "Eggs", EatenOn = Today, Slot = MealSlot.Breakfast, Calories = 180 });
-        journal.Entries.Add(new JournalEntry { Food = "Toast", EatenOn = Today, Slot = MealSlot.Breakfast, Calories = 80 });
-        journal.Entries.Add(new JournalEntry { Food = "Mystery stew", EatenOn = Today, Slot = MealSlot.Dinner });
+        journal.Entries.Add(new JournalEntry { Id = 1, Food = "Eggs", EatenOn = Today, Slot = MealSlot.Breakfast, Calories = 180 });
+        journal.Entries.Add(new JournalEntry { Id = 2, Food = "Toast", EatenOn = Today, Slot = MealSlot.Breakfast, Calories = 80 });
+        journal.Entries.Add(new JournalEntry { Id = 3, Food = "Mystery stew", EatenOn = Today, Slot = MealSlot.Dinner });
         var client = Script(Responses.Call("query_journal", ("period", "Day")));
 
         await Chat(client, journal).HandleAsync("what did I eat today?");
 
         var reply = ToolReply(client);
-        Assert.Contains("Breakfast: Eggs, Toast (260 kcal).", reply);
-        Assert.Contains("Dinner: Mystery stew (no calorie count).", reply);
+        // Each food by its [entry N], so "change the toast" can name the row edit_meal takes.
+        Assert.Contains("Breakfast: [entry 1] Eggs (180 kcal), [entry 2] Toast (80 kcal) — 260 kcal.", reply);
+        Assert.Contains("Dinner: [entry 3] Mystery stew (no calorie count) — no calorie count.", reply);
     }
 
     [Fact]
@@ -540,7 +686,7 @@ public class MealJournalChatTests
         var with = new FakeChatClient(() => Responses.Text("Hi."));
         await Chat(with, new FakeMealJournal()).HandleAsync("hello");
 
-        Assert.Equal(without.ReceivedOptions[0]!.Tools!.Count + 2, with.ReceivedOptions[0]!.Tools!.Count);
+        Assert.Equal(without.ReceivedOptions[0]!.Tools!.Count + 3, with.ReceivedOptions[0]!.Tools!.Count);
     }
 
     [Fact]
@@ -549,13 +695,14 @@ public class MealJournalChatTests
         var client = new FakeChatClient(
             () => Responses.ToolCalls(
                 Responses.Call("log_meal", ("food", "toast"), ("meal", "Breakfast")),
-                Responses.Call("query_journal", ("period", "Day"))),
+                Responses.Call("query_journal", ("period", "Day")),
+                Responses.Call("edit_meal", ("entry_id", 1), ("calories", 100))),
             () => Responses.Text("I can't do that here."));
 
         var result = await Chat(client, journal: null).HandleAsync("toast");
 
         Assert.Empty(result.Actions);
-        Assert.Equal("The meal journal isn't set up. | The meal journal isn't set up.", ToolReply(client));
+        Assert.Equal("The meal journal isn't set up. | The meal journal isn't set up. | The meal journal isn't set up.", ToolReply(client));
     }
 
     [Fact]

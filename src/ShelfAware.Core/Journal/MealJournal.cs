@@ -289,6 +289,30 @@ public static class MealJournal
             : (draft, false);
     }
 
+    /// <summary>How one entry is named to Reginald — its id first, so a later "change it" can say which row it
+    /// means. The one form the Journal page's screen context, <c>log_meal</c>'s answer and
+    /// <c>query_journal</c>'s day listing all use, so an id read in one is the id the edit tool takes.</summary>
+    public static string EntryLine(JournalEntry entry) =>
+        $"[entry {entry.Id}] {entry.Food} ({Total([entry]).KcalOrUncounted})";
+
+    /// <summary>What the Journal page tells Reginald it is showing: the day open — the day food logged without
+    /// a "when" goes on — and that day's entries by <see cref="EntryLine"/>, so "change the chiller" and "it"
+    /// name a row the edit tool can take. One text for the typed box, hold-to-talk and the roaming voice
+    /// agent alike.</summary>
+    public static string ScreenContext(DateOnly shown, DateOnly today, IEnumerable<JournalEntry> dayEntries)
+    {
+        var iso = shown.ToString("yyyy-MM-dd", Invariant);
+        var day = shown == today ? $"today ({iso})" : $"{Label(JournalPeriod.Day, new DateSpan(shown, shown))} ({iso})";
+        var text = $"The user is on their Meal Journal page, looking at {day}. "
+            + (shown == today
+                ? "Food they tell you about without saying when was eaten today."
+                : $"Food they tell you about without saying when was eaten on that day — pass date {iso} to log_meal — unless they say it was just now or today.");
+        var meals = Meals(dayEntries);
+        if (meals.Count == 0) return text + "\nNothing is logged on that day yet.";
+        return text + "\nLogged on that day:\n"
+            + string.Join("\n", meals.SelectMany(m => m.Items.Select(e => $"- {m.Slot}: {EntryLine(e)}")));
+    }
+
     /// <summary>How a span is named, on the page's headings and in Reginald's answers alike.</summary>
     public static string Label(JournalPeriod period, DateSpan span) => period switch
     {

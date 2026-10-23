@@ -18,6 +18,8 @@
                     Placeholder="e.g. two scrambled eggs and toast for breakfast"
                     AriaLabel="Tell Reginald what you ate"
                     BlankHint="@BlankHint"
+                    ScreenContext="@screenContext"
+                    RememberTurns="2"
                     OnApplied="LoadAsync" />
     <p class="muted small quick-update-hint">
         Your journal is yours alone — other members of your household don't see it. Calories marked
@@ -257,7 +259,25 @@
         await LoadAsync();
     }
 
-    public void Dispose() => Coordinator.PantryChanged -= OnPantryChangedAsync;
+    public void Dispose()
+    {
+        Coordinator.PantryChanged -= OnPantryChangedAsync;
+        // Cleared on the way out, so the roaming agent on the next page isn't told about this one.
+        Coordinator.ScreenContext = null;
+    }
+
+    /// <summary>What Reginald is told this page shows (MealJournal.ScreenContext) — the open day and its
+    /// entries. Handed to the box and hold-to-talk here, and to the roaming voice agent through the
+    /// coordinator, so all three default to the same day and name the same rows.</summary>
+    private string? screenContext;
+
+    private void PublishContext()
+    {
+        screenContext = entries is null
+            ? null
+            : MealJournal.ScreenContext(selected, Today, MealJournal.In(entries, MealJournal.SpanOf(JournalPeriod.Day, selected)));
+        Coordinator.ScreenContext = screenContext;
+    }
 
     private async Task OnPantryChangedAsync()
     {
@@ -270,6 +290,7 @@
         var grid = MealJournal.MonthGrid(month.Year, month.Month);
         var read = await Journal.GetAsync(new DateSpan(grid[0][0], grid[^1][^1]));
         entries = [.. read.Entries];
+        PublishContext();
         if (read.Problem is { } problem) Notify(problem, error: true);
     }
 
@@ -286,6 +307,7 @@
     {
         if (date > Today) return; // the journal only records what was already eaten
         selected = date;
+        PublishContext();
         CancelEdit();
         ClearNotice();
     }

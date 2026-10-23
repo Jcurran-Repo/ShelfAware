@@ -619,6 +619,41 @@ public class MealJournalTests
     }
 
     [Fact]
+    public void An_entry_is_named_to_reginald_by_its_id_food_and_calories()
+    {
+        var entry = E(Thursday, 450, estimated: true, food: "chiller, 16 oz");
+        entry.Id = 12;
+        var blank = E(Thursday, null, food: "stew");
+        blank.Id = 13;
+
+        Assert.Equal("[entry 12] chiller, 16 oz (~450 kcal)", MealJournal.EntryLine(entry));
+        Assert.Equal("[entry 13] stew (no calorie count)", MealJournal.EntryLine(blank));
+    }
+
+    [Fact]
+    public void The_journal_page_tells_reginald_today_and_its_entries_in_eating_order()
+    {
+        var lunch = E(Thursday, 450, estimated: true, slot: MealSlot.Snack, food: "chiller, 16 oz");
+        lunch.Id = 3;
+        var eggs = E(Thursday, 180, slot: MealSlot.Breakfast, food: "2 eggs");
+        eggs.Id = 4;
+
+        Assert.Equal(
+            "The user is on their Meal Journal page, looking at today (2026-10-08). Food they tell you about without saying when was eaten today."
+            + "\nLogged on that day:\n- Breakfast: [entry 4] 2 eggs (180 kcal)\n- Snack: [entry 3] chiller, 16 oz (~450 kcal)",
+            MealJournal.ScreenContext(Thursday, Thursday, [lunch, eggs]));
+    }
+
+    [Fact]
+    public void On_an_earlier_day_the_page_tells_reginald_to_log_there_unless_told_otherwise()
+    {
+        Assert.Equal(
+            "The user is on their Meal Journal page, looking at Tuesday, Oct 6 (2026-10-06). Food they tell you about without saying when was eaten on that day — pass date 2026-10-06 to log_meal — unless they say it was just now or today."
+            + "\nNothing is logged on that day yet.",
+            MealJournal.ScreenContext(Thursday.AddDays(-2), Thursday, []));
+    }
+
+    [Fact]
     public void A_food_with_nothing_remembered_is_written_as_it_came()
     {
         var draft = D("Pretzel", 380);

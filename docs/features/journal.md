@@ -92,6 +92,20 @@ logging into one household see two journals. That is a structural guard, not a W
 - `MealJournal.Problem` is the one write rule (food 1–200 chars, calories 0–10,000 or blank, not a
   future day), asked by `MealJournalService` itself so no surface can skip it.
 
+## Telling Reginald from the Journal page
+
+- **Corrections by chat or voice** (2026-10-23): `edit_meal` changes one entry — size, food, calories,
+  meal or day — named by the `[entry N]` that `MealJournal.EntryLine` puts on every entry Reginald is
+  shown (the page's screen context, `log_meal`'s answer, `query_journal`'s day listing), so an id read in
+  one is the id the tool takes. Only what was said changes; a different food with no new number takes
+  the person's own number for it or must be re-estimated, never the old food's calories under a new
+  name. The write is `MealJournalService.UpdateAsync`, the page's own edit, so the rule applies.
+- **The page is the context**: `MealJournal.ScreenContext` tells Reginald the day open and its entries;
+  food told without a "when" goes on that day. The typed box, hold-to-talk and the roaming voice agent
+  (through `VoiceCoordinator.ScreenContext`, cleared when the page goes away) all get the same text.
+- **"It" means what was just said**: the page's box keeps the last two exchanges (`RecentTurns`, shared
+  by typing and hold-to-talk) and replays them with each turn. A failed turn is not kept.
+
 ## Cost
 
 No new billable action. Logging or asking by voice or the text box is an ordinary chat turn

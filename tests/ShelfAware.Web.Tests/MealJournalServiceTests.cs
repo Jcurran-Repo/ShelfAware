@@ -308,6 +308,17 @@ public class MealJournalServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task An_entry_is_found_by_id_only_by_its_owner()
+    {
+        // Reginald's edit tool reads an entry by the id it was told — another member's id must find nothing.
+        var id = (await As(Jordan).LogAsync(Draft(food: "Jordan's lunch", calories: 450, estimated: false))).Entry!.Id;
+
+        Assert.Equal("Jordan's lunch", (await As(Jordan).GetEntryAsync(id))!.Food);
+        Assert.Null(await As(Spouse).GetEntryAsync(id));
+        Assert.Null(await As(Jordan).GetEntryAsync(id + 1));
+    }
+
+    [Fact]
     public async Task Another_household_sees_nothing_even_under_the_same_member_id()
     {
         // Belt and braces: the member filter narrows the household one, it does not replace it.
