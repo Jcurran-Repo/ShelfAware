@@ -103,6 +103,18 @@ fails:
 The scope step writes that one list of changed paths, and the guard reads it rather than asking git
 again with its own pathspec. Each failure shape was checked with a probe commit against a real report.
 
+⚠️ **Made per-file, 2026-10-23: the hole was never "the whole report tested nothing".** A mutation score
+is pooled across files, so a PR touching two Core files, one with killed mutants and one whose mutants
+all failed to compile, scored 100% and passed: the WaveAudio shape, hidden behind a neighbour. The
+guard now proves every changed Core source file on **every** run, not only when the report tested
+nothing. Each one still on disk must be in the report exactly once and either have at least one tested
+mutant or have no mutants at all. A file whose every mutant is CompileError or Ignored fails, whatever
+the rest of the PR did. Baseline compile errors in files the PR did not touch are not judged, and a
+file with some CompileError mutants beside tested ones passes, since that is ordinary Stryker output.
+The other changed paths (a Core test, a `.csproj`, a deleted file) have no mutants of their own, so
+they are proven by the run having tested something. With zero testable mutants report-wide they fail
+as before.
+
 ## Scope-tuning outcome (2026-08-25): nothing honest to exclude
 
 Before the sweep, a per-file audit of the baseline (the JSON report) settled whether any Core files
