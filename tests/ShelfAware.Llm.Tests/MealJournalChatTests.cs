@@ -290,7 +290,8 @@ public class MealJournalChatTests
 
         await Chat(client, new FakeMealJournal()).HandleAsync("hello");
 
-        Assert.DoesNotContain("own calorie number for", client.ReceivedMessages[0][0].Text);
+        // The standing prompt mentions the list; the list itself (its header) is only there when there is one.
+        Assert.DoesNotContain("Foods the user has given their own calorie number for", client.ReceivedMessages[0][0].Text);
     }
 
     [Fact]
