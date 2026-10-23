@@ -107,10 +107,10 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
         {
             var name = line.NormalizedName.Trim();
             if (name.Length == 0) continue;
-            var brand = string.IsNullOrWhiteSpace(line.Brand) ? null : line.Brand!.Trim();
-            var size = string.IsNullOrWhiteSpace(line.Size) ? null : line.Size!.Trim();
-            var variety = string.IsNullOrWhiteSpace(line.Variety) ? null : line.Variety!.Trim();
-            var quantity = line.Quantity > 0 ? line.Quantity : 1m;
+            var brand = Clean(line.Brand);
+            var size = Clean(line.Size);
+            var variety = Clean(line.Variety);
+            var quantity = PurchasedQuantity(line.Quantity);
             // The roll-up key: the matcher's identity — or, for a name with no identity content at all
             // ("!!" folds to an EMPTY key), the raw text itself, so two DIFFERENT junk names in one
             // receipt can't collide on "" and silently merge into one product. The two key kinds can't
@@ -147,33 +147,10 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
                 created++;
             }
 
-            // Buying an item again ends its "don't want it for a while": the grocery list's
-            // Ignore-for-now untracks a product, and a real purchase is the signal to resume
-            // predictions. Applies on every confirm path (manual review and auto-import alike).
-            if (!product.IsTracked)
-            {
-                product.IsTracked = true;
+            if (RecordPurchase(db, product, receipt.Id, purchaseDate, quantity, brand, size, variety,
+                    line.ExpirationDate).Retracked)
                 retracked.Add(product);
-            }
-
-            db.PurchaseEvents.Add(new PurchaseEvent
-            {
-                Product = product,
-                PurchasedAt = purchaseDate,
-                Quantity = quantity,
-                Brand = brand,
-                Size = size,
-                Variety = variety,
-                ExpirationDate = line.ExpirationDate,
-                Source = PurchaseSource.Receipt,
-                ReceiptId = receipt.Id,
-            });
             purchases++;
-
-            // §13.2: the count moves by the quantity actually bought — three cans adds 3, never 1. A
-            // no-op unless this product is counted AND has an established count; the rule lives in
-            // StockLedger so removal can take back exactly this much.
-            StockLedger.Add(product, quantity);
 
             TagVocabulary.ApplyTags(product, line.Tags, vocabulary);
 
@@ -256,6 +233,59 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
         await activityLog.TrimAsync(cancellationToken); // retention: best-effort, after the commit
         return new(AlreadyConfirmed: false, purchases, created, retracked.Count,
             concerns.Count > 0 ? concerns : null);
+    }
+
+    /// <summary>A receipt line's brand, size or variety as stored: trimmed, and blank means none.</summary>
+    public static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>The quantity a receipt line records: what was read, or 1 when nothing positive was.</summary>
+    public static decimal PurchasedQuantity(decimal quantity) => quantity > 0 ? quantity : 1m;
+
+    /// <param name="Purchase">The staged purchase row (its id is assigned on save).</param>
+    /// <param name="Retracked">Whether the purchase turned an untracked product back on.</param>
+    public sealed record RecordedPurchase(PurchaseEvent Purchase, bool Retracked);
+
+    /// <summary>
+    /// Stage ONE receipt line's purchase of <paramref name="product"/> — the purchase row stamped with its
+    /// receipt, the count moving by what was bought, and an untracked product turned back on. Shared by
+    /// the confirm above and <see cref="ReceiptLineProductService"/> (tracking a line the confirm left
+    /// unlinked), so a purchase recorded later from a receipt is the same purchase the confirm would
+    /// have recorded: same cleaning, same provenance, same ledger move, same retrack.
+    /// <paramref name="moveCount"/> is false only when a count attested since the confirm already
+    /// reflects this purchase (<see cref="ReceiptRemovalService.CountPostdatesConfirm"/>) — the confirm
+    /// itself always moves it, because nothing can postdate a confirm still in progress.
+    /// </summary>
+    public static RecordedPurchase RecordPurchase(
+        ShelfAwareDbContext db, Product product, int receiptId, DateOnly purchasedAt, decimal quantity,
+        string? brand, string? size, string? variety, DateOnly? expirationDate, bool moveCount = true)
+    {
+        quantity = PurchasedQuantity(quantity);
+
+        // Buying an item again ends its "don't want it for a while": the grocery list's
+        // Ignore-for-now untracks a product, and a real purchase is the signal to resume
+        // predictions. Applies on every confirm path (manual review and auto-import alike).
+        var retracked = !product.IsTracked;
+        product.IsTracked = true;
+
+        var purchase = new PurchaseEvent
+        {
+            Product = product,
+            PurchasedAt = purchasedAt,
+            Quantity = quantity,
+            Brand = Clean(brand),
+            Size = Clean(size),
+            Variety = Clean(variety),
+            ExpirationDate = expirationDate,
+            Source = PurchaseSource.Receipt,
+            ReceiptId = receiptId,
+        };
+        db.PurchaseEvents.Add(purchase);
+
+        // §13.2: the count moves by the quantity actually bought — three cans adds 3, never 1. A
+        // no-op unless this product is counted AND has an established count; the rule lives in
+        // StockLedger so removal can take back exactly this much.
+        if (moveCount) StockLedger.Add(product, quantity);
+        return new(purchase, retracked);
     }
 
     /// <summary>Tags ride on <see cref="ReceiptLine.TagsJson"/> as a JSON array (null when empty).</summary>

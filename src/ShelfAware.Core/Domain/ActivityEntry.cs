@@ -81,6 +81,10 @@ public enum ActivityKind
     // would only double-log the same narrative.
     CensusConfirmed,
     ProductsMerged,
+
+    // Reversible — appended, never inserted: kinds are stored by number. A confirmed receipt line
+    // tracked as a product after the fact (the /receipts "Create new product").
+    ReceiptLineTracked,
 }
 
 /// <summary>Whether an <see cref="ActivityKind"/> can ever be undone. A history-only action (a lossy

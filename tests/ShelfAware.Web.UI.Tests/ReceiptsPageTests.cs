@@ -31,6 +31,7 @@ public class ReceiptsPageTests : PageTestContext
             NullLogger<ReceiptStorage>.Instance);
         Services.AddSingleton(Storage);
         Services.AddSingleton(new ReceiptRemovalService(Factory, Storage, NullLogger<ReceiptRemovalService>.Instance));
+        Services.AddSingleton(new ReceiptLineProductService(Factory, ActivityLog));
     }
 
     protected override void Dispose(bool disposing)
@@ -367,5 +368,81 @@ public class ReceiptsPageTests : PageTestContext
         SeedReceipt(); // default lines, QuantityFlag None
         var cut = RenderReceipts();
         Assert.DoesNotContain("pack?", cut.Markup);
+    }
+
+    // --- the "not tracked" callout: a confirmed line that points at no product ---
+
+    [Fact]
+    public async Task An_untracked_line_is_called_out_and_Create_new_product_tracks_it()
+    {
+        var receiptId = SeedReceipt(r => r.Lines =
+        [
+            new ReceiptLine { RawText = "DRAGON SALSA", NormalizedName = "Dragonfruit Salsa", Quantity = 1m, Category = Category.Pantry },
+        ]);
+        var cut = RenderReceipts();
+
+        var card = cut.Find(".receipt-card");
+        Assert.Contains("1 not tracked", card.QuerySelector("summary")!.TextContent);
+        Assert.Contains("1 line on this receipt isn't tracked as a product", Collapsed(card.QuerySelector(".receipt-untracked")!));
+
+        card.QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Create new product").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Created “Dragonfruit Salsa” and recorded this purchase",
+                cut.Find(".receipt-card [role=status]").TextContent);
+            // The line is a product now: its name links to the product page, and the callout stands down.
+            Assert.NotNull(cut.Find(".receipt-card tbody a[href^='/product/']"));
+            Assert.Empty(cut.FindAll(".receipt-untracked"));
+            Assert.DoesNotContain("not tracked", cut.Find(".receipt-card summary").TextContent);
+        });
+        await using var db = Db.CreateDbContext();
+        var salsa = await db.Products.SingleAsync(p => p.Name == "Dragonfruit Salsa");
+        Assert.Equal(receiptId, (await db.PurchaseEvents.SingleAsync(p => p.ProductId == salsa.Id)).ReceiptId);
+        // Its purchase carries the receipt's id now, so the receipt can be removed as a unit.
+        Assert.Contains(cut.FindAll("button"), b => b.TextContent.Contains("Remove receipt"));
+    }
+
+    [Fact]
+    public void A_line_named_like_an_existing_product_offers_to_track_as_it_not_to_create_a_twin()
+    {
+        using (var db = Db.CreateDbContext())
+        {
+            db.Products.Add(new Product { Name = "Whole Milk", Category = Category.Dairy });
+            db.SaveChanges();
+        }
+        SeedReceipt(); // "Whole Milk" and "Mystery Item", neither linked
+        var cut = RenderReceipts();
+
+        var buttons = cut.FindAll(".receipt-line-track button").Select(b => b.TextContent.Trim()).ToList();
+        Assert.Equal(["Track as Whole Milk", "Create new product"], buttons);
+    }
+
+    [Fact]
+    public void A_second_line_with_a_just_created_name_offers_to_track_as_it()
+    {
+        SeedReceipt(r => r.Lines =
+        [
+            new ReceiptLine { RawText = "SALSA A", NormalizedName = "Salsa", Quantity = 1m },
+            new ReceiptLine { RawText = "SALSA B", NormalizedName = "salsa", Quantity = 1m },
+        ]);
+        var cut = RenderReceipts();
+
+        cut.FindAll(".receipt-line-track button")[0].Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("Track as Salsa",
+            cut.Find(".receipt-line-track button").TextContent.Trim()));
+    }
+
+    [Fact]
+    public void A_pending_receipts_unlinked_lines_are_not_called_out()
+    {
+        // Review hasn't run, so of course nothing is linked yet — that's the Upload page's job.
+        SeedReceipt(r => r.Status = ReceiptStatus.PendingReview);
+        var cut = RenderReceipts();
+
+        Assert.Empty(cut.FindAll(".receipt-untracked"));
+        Assert.Empty(cut.FindAll(".receipt-line-track"));
+        Assert.DoesNotContain("not tracked", cut.Markup);
     }
 }
