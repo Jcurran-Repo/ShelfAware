@@ -4,8 +4,10 @@ using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Undo;
 
-/// <summary>Reverse-and-check data for a start/stop-tracking toggle (the grocery list's Untrack / the
-/// dashboard's resume): which product, and its before/after tracked state.</summary>
+/// <summary>Reverse-and-check data for a start/stop-tracking toggle — every surface's, since they all
+/// write through <c>IPantryStore.SetTrackingAsync</c> (the dashboard's and grocery list's Untrack, the
+/// Products checkbox, the recipe row's re-track, chat's set_tracking): which product, and its
+/// before/after tracked state.</summary>
 public sealed record TrackingChangedPayload(int ProductId, bool WasTracked, bool NowTracked, string ProductName);
 
 /// <summary>Undo for a tracking toggle: flip <c>IsTracked</c> back. Refuses

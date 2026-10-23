@@ -1,0 +1,16 @@
+@* "Don't want it for a while": stops tracking a product, so it leaves the grocery list and the dashboard
+   until a purchase re-tracks it (history kept). One component so every surface that offers it — the
+   grocery list's rows, the dashboard's cards and its Everything-else table — says the same thing about
+   what the tap does, to the eye and to a screen reader. The write is the page's: it owns the busy guard
+   and the reload. *@
+<button type="button" class="@Class" @onclick="OnUntrack" disabled="@Disabled"
+        title="Don't want @Name for a while — stops suggesting it until you buy it again (history kept)"
+        aria-label="Untrack @Name — stop suggesting it until it's bought again">Untrack</button>
+
+@code {
+    [Parameter, EditorRequired] public string Name { get; set; } = "";
+    [Parameter] public EventCallback OnUntrack { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    /// <summary>The quiet chip by default; a split-button menu passes "secondary" to match its siblings.</summary>
+    [Parameter] public string Class { get; set; } = "untrack-btn";
+}

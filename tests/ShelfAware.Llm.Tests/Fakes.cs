@@ -248,12 +248,12 @@ internal sealed class FakePantryStore : IPantryStore
         return Task.FromResult<ActivityRef?>(null); // fake doesn't record undo entries
     }
 
-    public Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default)
+    public Task<ActivityRef?> SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default)
     {
-        if (Products.FirstOrDefault(p => p.Id == productId) is not { } product) return Task.CompletedTask;
+        if (Products.FirstOrDefault(p => p.Id == productId) is not { } product) return Task.FromResult<ActivityRef?>(null);
         product.IsTracked = tracked;
         Tracking.Add((productId, tracked));
-        return Task.CompletedTask;
+        return Task.FromResult<ActivityRef?>(null); // fake doesn't record undo entries
     }
 
     public List<(int ProductId, DateOnly? ExpiresOn)> Expirations { get; } = [];
@@ -365,7 +365,7 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
     // Prompt composition reads the vocabulary before any tool runs — must succeed even in this fake.
     public Task<IReadOnlyList<string>> GetKnownTagsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>([]);
     public Task<ActivityRef?> RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    public Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<ActivityRef?> SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<bool> SetExpirationAsync(int productId, DateOnly? expiresOn, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
     public Task<bool> SetQuantityAsync(

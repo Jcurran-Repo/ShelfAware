@@ -558,10 +558,7 @@ else
                                                 disabled="@actionBusy"
                                                 title="Still have some @e.Name — the reminder was early. Snoozes it a few days rather than assuming a fresh supply"
                                                 aria-label="Mark @e.Name still in stock — you were early, snooze it">Still in stock</button>
-                                        <button type="button" class="untrack-btn" @onclick="() => Untrack(e)"
-                                                disabled="@actionBusy"
-                                                title="Don't want @e.Name for a while — stops suggesting it until you buy it again (history kept)"
-                                                aria-label="Untrack @e.Name — stop suggesting it until it's bought again">Untrack</button>
+                                        <UntrackButton Name="@e.Name" Disabled="actionBusy" OnUntrack="() => Untrack(e)" />
                                     </td>
                                 }
                             </tr>
@@ -658,12 +655,9 @@ else
         try
         {
             copyStatus = null; // the copied list is now stale
-            await using var db = await DbFactory.CreateDbContextAsync();
-            if (await db.Products.FindAsync(e.ProductId) is { } product)
-            {
-                product.IsTracked = false;
-                await db.SaveChangesAsync();
-            }
+            // Through the store, like the dashboard's Untrack and the Products checkbox: the one tracking
+            // write, which also logs an undoable TrackingChanged so History can take it back.
+            await Store.SetTrackingAsync(e.ProductId, tracked: false);
             await LoadAsync();
         }
         finally { actionBusy = false; }

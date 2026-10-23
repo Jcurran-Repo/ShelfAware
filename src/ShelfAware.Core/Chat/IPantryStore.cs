@@ -87,8 +87,10 @@ public interface IPantryStore
     Task<bool> SetDefaultUnitAsync(int productId, string? unit, CancellationToken cancellationToken = default);
 
     /// <summary>Start or stop tracking a product for replenishment (untracked = kept in the catalog
-    /// but not predicted or shown as running low).</summary>
-    Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default);
+    /// but not predicted or shown as running low). Returns a reference to the undo entry it recorded, for
+    /// an inline "↩ Undo" — null when nothing changed (already in that state, or no such product), since
+    /// only a real change is recorded.</summary>
+    Task<ActivityRef?> SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default);
 
     /// <summary>Saved recipes (id, name, whether cooking steps exist) — lets the read_recipe chat
     /// tool resolve a spoken name to something the Recipes page can read aloud.</summary>
