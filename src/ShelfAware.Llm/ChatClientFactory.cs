@@ -27,7 +27,10 @@ public sealed class ChatClientFactory : IChatClientFactory
         {
             // Both SDKs ship a Microsoft.Extensions.AI adapter, so the rest of the app depends only on
             // IChatClient and the provider is a pure swap here.
-            AiProvider.Anthropic => new AnthropicClient { ApiKey = apiKey }.AsIChatClient(model),
+            // Wrapped so every Anthropic call is sent with AnthropicThinking's answer, whichever service
+            // built the options.
+            AiProvider.Anthropic => new AnthropicThinkingChatClient(
+                new AnthropicClient { ApiKey = apiKey }.AsIChatClient(model), model),
             AiProvider.OpenAI => new OpenAIClient(apiKey).GetChatClient(model).AsIChatClient(),
             AiProvider.OpenAICompatible => LocalOpenAiCompatible(apiKey, model, baseUrl),
             _ => throw new ArgumentOutOfRangeException(nameof(provider), provider, "Unknown AI provider."),
