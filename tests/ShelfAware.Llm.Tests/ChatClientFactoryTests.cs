@@ -170,8 +170,8 @@ public class AnthropicThinkingTests
 
     private static async Task<JsonDocument> SentBody(string model)
     {
-        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json($$"""
-            {"id":"msg_1","type":"message","role":"assistant","model":"{{model}}",
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json($$$"""
+            {"id":"msg_1","type":"message","role":"assistant","model":"{{{model}}}",
              "content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","stop_sequence":null,
              "usage":{"input_tokens":1,"output_tokens":1}}
             """));
