@@ -49,11 +49,15 @@ jobs:
         run: |
           # Capture the diff on its own line and FAIL LOUD if it errors: a silent core=false would let a
           # Core-changing PR bypass the gate. fetch-depth: 0 makes an error reachable only on real breakage.
-          if ! changed="$(git diff --name-only "$BASE_SHA" HEAD -- src/ShelfAware.Core/ tests/ShelfAware.Tests/)"; then
+          # THE one list of what this PR changed in Core — written to a file so the reach guard below judges
+          # exactly the set this step decided on, rather than re-asking git with its own pathspec.
+          changes="$RUNNER_TEMP/core-changes.txt"
+          if ! git -c core.quotePath=false diff --name-only "$BASE_SHA" HEAD -- src/ShelfAware.Core/ tests/ShelfAware.Tests/ > "$changes"; then
             echo "::error::Could not diff against base $BASE_SHA — refusing to skip the mutation gate."
             exit 1
           fi
-          if [ -n "$changed" ]; then
+          echo "changes=$changes" >> "$GITHUB_OUTPUT"
+          if [ -s "$changes" ]; then
             echo "core=true" >> "$GITHUB_OUTPUT"
           else
             echo "core=false" >> "$GITHUB_OUTPUT"
@@ -97,6 +101,8 @@ jobs:
       # exactly the case the hole lives in — a red Stryker step already has the job.
       - name: Refuse a green run that tested nothing
         if: steps.scope.outputs.core == 'true'
+        env:
+          CHANGES: ${{ steps.scope.outputs.changes }}
         run: |
           report="$(find tests/ShelfAware.Tests/StrykerOutput -path '*/reports/mutation-report.json' 2>/dev/null | sort | tail -1)"
           if [ -z "$report" ] || [ ! -f "$report" ]; then
@@ -107,8 +113,38 @@ jobs:
           tested=$(jq '[.files[]?.mutants[]? | select(.status != "CompileError" and .status != "Ignored")] | length' "$report")
           echo "Mutants in the report: $total; testable (a status other than CompileError/Ignored): $tested"
           if [ "$tested" -eq 0 ]; then
-            echo "::error::ZERO testable mutants. This PR changed Core, Stryker exited 0, and every mutant it generated ($total) was CompileError or Ignored — so the 100% this check would otherwise report is a score over nothing (Stryker logs 'unable to calculate a mutation score' for this and still exits 0). Make the mutants compile — a constant-folded argument that Stryker rewrites into a ternary is the known cause (docs/mutation-testing.md § 'Known limitation') — or, if the change genuinely has nothing to mutate, say so on the PR so a reviewer can agree."
-            exit 1
+            # Zero testable means one of two things, and only one is the hole. A diff-scoped report keeps the
+            # baseline's compile errors Core-wide (~590, in files nobody touched): --since Ignores out-of-diff
+            # mutants but leaves those as CompileError. So "every mutant was CompileError or Ignored" is ALSO
+            # what a PR looks like whose Core change produces no mutants at all — a new enum member, an
+            # interface signature (#91 and #93, both held red on nothing).
+            # So the run passes on exactly one proof: EVERY path the scope step listed is a Core .cs file the
+            # report holds exactly once, with ZERO mutants of any status — nothing to test, nothing that
+            # failed to compile (WaveAudio.cs), nothing Ignored by a disable comment or a missed diff. Every
+            # other change fails as before: a Core test (something should have re-run), a .csproj or other
+            # non-C# file, a deleted file, or a name we can't match to one report entry — unproven is not read.
+            # If a PR genuinely trips this with nothing to test, say so on the PR so a reviewer can agree.
+            # Fail-closed at both ends: an empty list (unreachable while core=true means a non-empty file, but
+            # an empty loop would otherwise pass) and an entry with no mutants ARRAY (a truncated or reshaped
+            # report must not read as "zero mutants") are unproven, not proof.
+            unproven="$(jq -R -s -r --slurpfile report "$report" '
+              ($report[0].files) as $files | [$files | keys[]] as $keys
+              | split("\n") | map(select(length > 0)) as $changed
+              | if ($changed | length) == 0 then "(no changed paths were recorded)" else
+                  $changed[] | . as $c
+                  | if (startswith("src/ShelfAware.Core/") and endswith(".cs") | not) then "\($c): not a Core source file"
+                    else [$keys[] | select(endswith("/" + $c))] as $m
+                    | if ($m | length) != 1 then "\($c): not in the report exactly once"
+                      elif ($files[$m[0]].mutants | type) != "array" then "\($c): report entry has no mutants list"
+                      elif ($files[$m[0]].mutants | length) > 0 then "\($c): \($files[$m[0]].mutants | length) mutants, none tested"
+                      else empty end
+                    end
+                end' "$CHANGES")"
+            if [ -n "$unproven" ]; then
+              echo "::error::ZERO testable mutants, and these changes were not proven to have nothing to mutate: $(printf '%s' "$unproven" | tr '\n' ';') — so the 100% this check would otherwise report is a score over nothing (Stryker logs 'unable to calculate a mutation score' for this and still exits 0). Make the mutants compile — a constant-folded argument that Stryker rewrites into a ternary is the known cause (docs/mutation-testing.md § 'Known limitation') — or, if the change genuinely has nothing to mutate, say so on the PR so a reviewer can agree."
+              exit 1
+            fi
+            echo "::notice::This PR's Core changes produce no mutants — every changed file is in the report with zero mutants: $(tr '\n' ' ' < "$CHANGES")"
           fi
 
       # On a survivor, turn Stryker's "exit code 2" into an instant, clear answer ON the PR: an inline
