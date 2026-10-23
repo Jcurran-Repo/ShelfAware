@@ -27,14 +27,21 @@ public sealed class ChatClientFactory : IChatClientFactory
         {
             // Both SDKs ship a Microsoft.Extensions.AI adapter, so the rest of the app depends only on
             // IChatClient and the provider is a pure swap here.
-            // Wrapped so every Anthropic call is sent with AnthropicThinking's answer, whichever service
-            // built the options.
-            AiProvider.Anthropic => AnthropicThinking.Wrap(
-                new AnthropicClient { ApiKey = apiKey }.AsIChatClient(model), model),
+            AiProvider.Anthropic => AnthropicChatClient(apiKey, model),
             AiProvider.OpenAI => new OpenAIClient(apiKey).GetChatClient(model).AsIChatClient(),
             AiProvider.OpenAICompatible => LocalOpenAiCompatible(apiKey, model, baseUrl),
             _ => throw new ArgumentOutOfRangeException(nameof(provider), provider, "Unknown AI provider."),
         };
+    }
+
+    // Wrapped so every Anthropic call is sent with AnthropicThinking's answer, whichever service built the
+    // options. The HttpClient is a test seam only: the wire tests read the request this exact client sends.
+    internal static IChatClient AnthropicChatClient(string apiKey, string model, HttpClient? http = null)
+    {
+        var client = http is null
+            ? new AnthropicClient { ApiKey = apiKey }
+            : new AnthropicClient { ApiKey = apiKey, HttpClient = http, MaxRetries = 0 };
+        return AnthropicThinking.Wrap(client.AsIChatClient(model), model);
     }
 
     // A locally run or self-hosted OpenAI-compatible server (Ollama, LM Studio, llama.cpp, vLLM). Same

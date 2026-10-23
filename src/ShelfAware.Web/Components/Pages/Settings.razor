@@ -1050,9 +1050,9 @@
     }
 
     // Curated defaults, but the fields are editable (datalist) so a stale list never boxes you in.
-    // ⚠️ The first entry is what a blank field fills with (LoadProviderFields), so it must be LlmOptions'
-    // default model or this screen names one model while the server calls another.
-    private static readonly string[] AnthropicModels = ["claude-haiku-5-5", "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "claude-opus-5-5"];
+    // The first entry is what a blank field fills with (LoadProviderFields), so it IS the app's default
+    // model rather than a copy of it.
+    private static readonly string[] AnthropicModels = [LlmOptions.DefaultModel, "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "claude-opus-5-5"];
     private static readonly string[] OpenAiModels = ["gpt-4o-mini", "gpt-4o"];
     private static readonly string[] LocalModels = ["llama3.1", "qwen2.5", "mistral", "phi3"];
     private static string[] ModelsFor(string p) => p switch

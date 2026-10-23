@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Anthropic;
 using Microsoft.Extensions.AI;
 using ShelfAware.Llm;
 
@@ -169,8 +168,7 @@ public class AnthropicThinkingTests
              "usage":{"input_tokens":1,"output_tokens":1}}
             """));
         using var http = new HttpClient(handler);
-        using var client = AnthropicThinking.Wrap(
-            new AnthropicClient { ApiKey = "sk-test", HttpClient = http, MaxRetries = 0 }.AsIChatClient(model), model);
+        using var client = ChatClientFactory.AnthropicChatClient("sk-test", model, http); // the factory's own construction
 
         await client.GetResponseAsync("hi", new ChatOptions { ModelId = model, MaxOutputTokens = 64 });
 
