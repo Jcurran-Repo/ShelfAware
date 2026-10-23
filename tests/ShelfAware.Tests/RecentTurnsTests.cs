@@ -29,6 +29,18 @@ public class RecentTurnsTests
         Assert.Equal([new ChatTurn("c", "d")], turns.Turns);
     }
 
+    [Fact]
+    public void Turns_read_before_another_exchange_finishes_do_not_change_under_the_reader()
+    {
+        var turns = new RecentTurns(keep: 1);
+        turns.Add("a", "b");
+        var sent = turns.Turns;
+
+        turns.Add("c", "d");
+
+        Assert.Equal([new ChatTurn("a", "b")], sent);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]

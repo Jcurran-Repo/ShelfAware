@@ -264,9 +264,9 @@ public static class MealJournal
     {
         // Stryker disable once Equality: SizeConflict never pairs equal sizes, so > and >= agree here.
         var bigger = Ounces(draft.Food) > Ounces(other.Food);
-        return $"Not logged: {Number(draft.Calories!.Value)} calories for {draft.Food} is {(bigger ? "less" : "more")} than the "
+        return $"Not saved: {Number(draft.Calories!.Value)} calories for {draft.Food} is {(bigger ? "less" : "more")} than the "
             + $"{Number(other.Calories!.Value)} already logged for {other.Food} — a {(bigger ? "bigger" : "smaller")} size can't have "
-            + $"{(bigger ? "fewer" : "more")} calories. Re-estimate it for its size and call log_meal again.";
+            + $"{(bigger ? "fewer" : "more")} calories. Re-estimate it for its size and try again.";
     }
 
     /// <summary>The person's remembered number for <paramref name="food"/> (<see cref="FoodKey"/> match), or
@@ -291,9 +291,10 @@ public static class MealJournal
 
     /// <summary>How one entry is named to Reginald — its id first, so a later "change it" can say which row it
     /// means. The one form the Journal page's screen context, <c>log_meal</c>'s answer and
-    /// <c>query_journal</c>'s day listing all use, so an id read in one is the id the edit tool takes.</summary>
+    /// <c>query_journal</c>'s day listing all use, so an id read in one is the id the edit tool takes. The food
+    /// is <see cref="Flatten"/>ed: the screen context lists one entry per line, and a name must not start another.</summary>
     public static string EntryLine(JournalEntry entry) =>
-        $"[entry {entry.Id}] {entry.Food} ({Total([entry]).KcalOrUncounted})";
+        $"[entry {entry.Id}] {Flatten(entry.Food)} ({Total([entry]).KcalOrUncounted})";
 
     /// <summary>What the Journal page tells Reginald it is showing: the day open — the day food logged without
     /// a "when" goes on — and that day's entries by <see cref="EntryLine"/>, so "change the chiller" and "it"

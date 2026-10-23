@@ -16,8 +16,10 @@ public sealed class RecentTurns
         _keep = keep;
     }
 
-    /// <summary>The kept exchanges, oldest first — the order <see cref="IPantryChat.HandleAsync"/> replays them.</summary>
-    public IReadOnlyList<ChatTurn> Turns => _turns;
+    /// <summary>The kept exchanges, oldest first — the order <see cref="IPantryChat.HandleAsync"/> replays them.
+    /// A copy: a turn reads its history after several awaits, and an exchange that finishes in the meantime
+    /// (the typed box and hold-to-talk share one of these) must not change what that turn was sent with.</summary>
+    public IReadOnlyList<ChatTurn> Turns => [.. _turns];
 
     /// <summary>Keep one finished exchange.</summary>
     public void Add(string user, string assistant)

@@ -261,6 +261,7 @@
 
     public void Dispose()
     {
+        disposed = true;
         Coordinator.PantryChanged -= OnPantryChangedAsync;
         // Cleared on the way out, so the roaming agent on the next page isn't told about this one.
         Coordinator.ScreenContext = null;
@@ -271,9 +272,18 @@
     /// coordinator, so all three default to the same day and name the same rows.</summary>
     private string? screenContext;
 
+    /// <summary>Set once the page is gone, so a load still in flight then can't publish this page's context
+    /// over the next page's after <c>Dispose</c> cleared it.</summary>
+    private bool disposed;
+
+    /// <summary>True when the last read was refused (nobody signed in) — then nothing is said about the day at
+    /// all, rather than "nothing is logged" about a journal nobody could read.</summary>
+    private bool unreadable;
+
     private void PublishContext()
     {
-        screenContext = entries is null
+        if (disposed) return;
+        screenContext = entries is null || unreadable
             ? null
             : MealJournal.ScreenContext(selected, Today, MealJournal.In(entries, MealJournal.SpanOf(JournalPeriod.Day, selected)));
         Coordinator.ScreenContext = screenContext;
@@ -290,6 +300,7 @@
         var grid = MealJournal.MonthGrid(month.Year, month.Month);
         var read = await Journal.GetAsync(new DateSpan(grid[0][0], grid[^1][^1]));
         entries = [.. read.Entries];
+        unreadable = read.Problem is not null;
         PublishContext();
         if (read.Problem is { } problem) Notify(problem, error: true);
     }

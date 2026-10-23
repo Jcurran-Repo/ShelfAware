@@ -314,6 +314,37 @@ public class MealJournalPageTests : PageTestContext
     }
 
     [Fact]
+    public void A_load_that_finishes_after_the_page_is_gone_does_not_tell_the_next_page_about_this_one()
+    {
+        var cut = RenderPage();
+        var held = new TaskCompletionSource<ChatResult>();
+        Chat.Hold = held;
+        cut.Find("section.quick-update input").Input("a banana");
+        cut.Find("section.quick-update form").Submit();
+        cut.WaitForAssertion(() => Assert.Single(Chat.Asked));
+
+        cut.Instance.Dispose(); // navigated away while Reginald was still answering
+        Seed("Banana", 105, estimated: true, slot: MealSlot.Snack);
+        held.SetResult(new() { Success = true, Reply = "Logged it." });
+
+        // The turn's reload ran to the end (the banana is on the page) — and still published nothing.
+        cut.WaitForAssertion(() => Assert.Contains("Banana", cut.Find(".journal-day").TextContent));
+        Assert.Null(Coordinator.ScreenContext);
+    }
+
+    [Fact]
+    public void With_nobody_signed_in_reginald_is_told_nothing_about_the_day()
+    {
+        // "Nothing is logged on that day yet" would be a claim about a journal nobody could read.
+        Db.MemberId = null;
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.Contains("needs someone signed in", cut.Markup));
+        Assert.Null(Coordinator.ScreenContext);
+    }
+
+    [Fact]
     public void The_last_two_exchanges_ride_along_so_it_means_what_was_just_said()
     {
         var cut = RenderPage();

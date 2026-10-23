@@ -40,8 +40,10 @@ public class MealJournalChatTests
         public Task<IReadOnlyList<RememberedCalories>> RememberedAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(MealJournal.Remembered(Entries));
 
-        public Task<JournalEntry?> GetEntryAsync(int id, CancellationToken cancellationToken = default) =>
-            Task.FromResult(Entries.FirstOrDefault(e => e.Id == id));
+        public Task<JournalRead> GetEntryAsync(int id, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Unreadable is { } problem
+                ? JournalRead.Refused(problem)
+                : JournalRead.Of([.. Entries.Where(e => e.Id == id)]));
 
         public List<(int Id, JournalDraft Draft)> Updates { get; } = [];
 
@@ -558,6 +560,76 @@ public class MealJournalChatTests
         Assert.Equal((910, false), (journal.Entries.Single(e => e.Id == 7).Calories, journal.Entries.Single(e => e.Id == 7).CaloriesEstimated));
     }
 
+    [Fact]
+    public async Task A_new_size_alone_is_refused_so_the_old_size_cannot_stay_in_the_name()
+    {
+        // "chiller, 16 oz" plus portion "32 oz" would be stored as "chiller, 16 oz, 32 oz" — and read as a 16.
+        var journal = WithChiller();
+        var client = Script(Responses.Call("edit_meal", ("entry_id", 7), ("portion", "32 oz"), ("calories", 900)));
+
+        await Chat(client, journal).HandleAsync("actually it was the 32 oz");
+
+        Assert.Empty(journal.Updates);
+        Assert.StartsWith("Not changed: with a new portion, pass food too", ToolReply(client));
+    }
+
+    [Fact]
+    public async Task Their_own_number_for_the_new_food_wins_over_the_estimate_as_log_meal_would_have_it()
+    {
+        var journal = WithChiller();
+        journal.Entries.Add(new JournalEntry
+        {
+            Id = 8, Food = "7 Brew chiller, 32 oz", Slot = MealSlot.Snack, EatenOn = Today.AddDays(-3), Calories = 910,
+            LoggedAt = DateTimeOffset.Now,
+        });
+        var client = Script(Responses.Call("edit_meal",
+            ("entry_id", 7), ("food", "7 Brew chiller"), ("portion", "32 oz"), ("calories", 880)));
+
+        await Chat(client, journal).HandleAsync("it was the 32");
+
+        var entry = journal.Entries.Single(e => e.Id == 7);
+        Assert.Equal((910, false), (entry.Calories, entry.CaloriesEstimated));
+        Assert.Contains("(their own number from the last time they logged it).", ToolReply(client));
+    }
+
+    [Fact]
+    public async Task Echoing_the_number_already_there_does_not_demote_their_own_to_an_estimate()
+    {
+        var journal = WithChiller(calories: 480, estimated: false);
+        var client = Script(Responses.Call("edit_meal", ("entry_id", 7), ("meal", "lunch"), ("calories", 480)));
+
+        await Chat(client, journal).HandleAsync("that was lunch");
+
+        var entry = Assert.Single(journal.Entries);
+        Assert.Equal((MealSlot.Lunch, 480, false), (entry.Slot, entry.Calories, entry.CaloriesEstimated));
+    }
+
+    [Fact]
+    public async Task An_edit_that_changes_nothing_writes_nothing()
+    {
+        var journal = WithChiller();
+        var client = Script(Responses.Call("edit_meal", ("entry_id", 7), ("meal", "Snack"), ("calories", 450)));
+
+        var result = await Chat(client, journal).HandleAsync("it was a snack");
+
+        Assert.Empty(journal.Updates);
+        Assert.Empty(result.Actions);
+        Assert.Equal("Nothing to change: [entry 7] 7 Brew chiller, 16 oz (~450 kcal) already says that.", ToolReply(client));
+    }
+
+    [Fact]
+    public async Task With_nobody_signed_in_an_edit_says_so_rather_than_that_the_entry_is_gone()
+    {
+        var journal = WithChiller();
+        journal.Unreadable = "Nobody is signed in.";
+        var client = Script(Responses.Call("edit_meal", ("entry_id", 7), ("calories", 500)));
+
+        await Chat(client, journal).HandleAsync("make it 500");
+
+        Assert.Empty(journal.Updates);
+        Assert.Equal("Nobody is signed in.", ToolReply(client));
+    }
+
     [Theory]
     [InlineData(null, "Pass entry_id")]
     [InlineData(99, "There is no entry 99 in their journal")]
@@ -753,6 +825,19 @@ public class MealJournalChatTests
             () => throw new HttpRequestException("the provider went away")));
 
         await Chat(charging, new FakeMealJournal()).HandleAsync("cake next week");
+
+        Assert.True(charging.Charged);
+        Assert.Equal(0, charging.RefundedFor);
+    }
+
+    [Fact]
+    public async Task An_edit_that_changed_nothing_is_refunded_when_the_provider_drops()
+    {
+        var charging = new ChargingChatClient(new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("edit_meal", ("entry_id", 7), ("calories", 450))),
+            () => throw new HttpRequestException("the provider went away")));
+
+        await Chat(charging, WithChiller()).HandleAsync("it was 450");
 
         Assert.True(charging.Charged);
         Assert.Equal(0, charging.RefundedFor);

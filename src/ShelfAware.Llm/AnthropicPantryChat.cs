@@ -831,11 +831,18 @@ public class AnthropicPantryChat : IPantryChat
             {
                 if (_journal is null) return ("The meal journal isn't set up.", true);
                 if (Int("entry_id") is not { } id) return ("Pass entry_id — the number in [entry N] from the journal listing.", true);
-                var before = await _journal.GetEntryAsync(id, ct);
-                if (before is null) return ($"There is no entry {id} in their journal — it may have been removed.", true);
+                var found = await _journal.GetEntryAsync(id, ct);
+                if (found.Problem is { } unreadable) return (unreadable, true);
+                if (found.Entries is not [var before]) return ($"There is no entry {id} in their journal — it may have been removed.", true);
 
+                // A new size goes on the food's name — so the name it had must come too, without its old size,
+                // or "chiller, medium" plus "large" would be stored as "chiller, medium, large".
+                var named = Str("food")?.Trim();
+                var portion = Str("portion");
+                if (string.IsNullOrEmpty(named) && !string.IsNullOrWhiteSpace(portion))
+                    return ("Not changed: with a new portion, pass food too — the food's name without its old size — so the old size doesn't stay in the name.", true);
                 // Only what they said changes; everything else stays as the entry has it.
-                var food = MealJournal.WithPortion(Str("food")?.Trim() is { Length: > 0 } named ? named : before.Food, Str("portion"));
+                var food = MealJournal.WithPortion(string.IsNullOrEmpty(named) ? before.Food : named, portion);
                 var slot = before.Slot;
                 if (Str("meal") is { Length: > 0 } rawMeal &&
                     (!Enum.TryParse(rawMeal, ignoreCase: true, out slot) || !Enum.IsDefined(slot)))
@@ -845,25 +852,36 @@ public class AnthropicPantryChat : IPantryChat
                     !DateOnly.TryParseExact(rawDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out eatenOn))
                     return ($"Couldn't read \"{rawDate}\" as a date — pass it as YYYY-MM-DD.", true);
 
-                // The number: one given now wins; otherwise the same food keeps its number, and a different
-                // food (a new size, say) takes the person's own number for it or must be re-estimated — the
-                // old food's calories on the new food's name would be a number nobody gave.
+                // The number. One they said is theirs. The same food keeps its number and whose it is — an
+                // echo of the number already there is not a new estimate, and must not demote their own. A
+                // different food (a new size, say) is priced as log_meal prices it: their remembered number
+                // for it wins over the estimate (MealJournal.Recall, THE override rule), and with neither, the
+                // old food's calories on the new food's name would be a number nobody gave — refused.
                 int? calories = Int("calories");
-                bool estimated;
-                if (calories is not null)
-                    estimated = Bool("calories_stated") != true;
-                else if (MealJournal.FoodKey(food) == MealJournal.FoodKey(before.Food))
-                    (calories, estimated) = (before.Calories, before.CaloriesEstimated);
-                else if (MealJournal.Find(food, remembered) is { } theirs)
-                    (calories, estimated) = (theirs.Calories, false);
+                var stated = calories is not null && Bool("calories_stated") == true;
+                var sameFood = MealJournal.FoodKey(food) == MealJournal.FoodKey(before.Food);
+                JournalDraft draft;
+                var recalled = false;
+                if (sameFood && (calories is null || calories == before.Calories))
+                    draft = new(food, slot, eatenOn, before.Calories, before.CaloriesEstimated && !stated);
+                else if (sameFood || stated)
+                    draft = new(food, slot, eatenOn, calories, !stated);
                 else
-                    return ("Not changed: the food is different now, so its calories must be too. Call edit_meal again with calories — your estimate for the new food and size, or theirs with calories_stated=true.", true);
+                {
+                    (draft, recalled) = MealJournal.Recall(new JournalDraft(food, slot, eatenOn, calories, CaloriesEstimated: true), remembered);
+                    if (draft.Calories is null)
+                        return ("Not changed: the food is different now, so its calories must be too. Call edit_meal again with calories — your estimate for the new food and size, or theirs with calories_stated=true.", true);
+                }
 
-                var edit = await _journal.UpdateAsync(id, new JournalDraft(food, slot, eatenOn, calories, estimated), ct);
+                if (draft == new JournalDraft(before.Food, before.Slot, before.EatenOn, before.Calories, before.CaloriesEstimated))
+                    return ($"Nothing to change: {MealJournal.EntryLine(before)} already says that.", false);
+
+                var edit = await _journal.UpdateAsync(id, draft, ct);
                 if (edit.Entry is not { } after) return (edit.Problem!, true);
                 wrote.Mark();
                 actions.Add($"journal ✎ {after.Food}");
                 return ($"Updated {MealJournal.EntryLine(before)} to {MealJournal.EntryLine(after)}, {MealJournal.SlotName(after.Slot)} on {after.EatenOn:yyyy-MM-dd}"
+                    + (recalled ? " (their own number from the last time they logged it)" : "")
                     + (after.CaloriesEstimated ? " — an estimate." : "."), false);
             }
 
@@ -1109,7 +1127,7 @@ public class AnthropicPantryChat : IPantryChat
                 {
                   "entry_id": { "type": "integer", "description": "The entry to change: the N in [entry N]." },
                   "food": { "type": "string", "description": "The food's new description, if it changes." },
-                  "portion": { "type": "string", "description": "A new size or amount in the user's words ('large', '32 oz'), if that is what changes." },
+                  "portion": { "type": "string", "description": "A new size or amount in the user's words ('large', '32 oz'), if that is what changes. Pass food with it: the food's name without the old size." },
                   "calories": { "type": "integer", "description": "The new calories: the number they stated, or your estimate when the food or size changed. Omit to keep the number for an unchanged food." },
                   "calories_stated": { "type": "boolean", "description": "true ONLY when the user said the calorie number themselves." },
                   "meal": { "type": "string", "enum": ["Breakfast","Lunch","Dinner","Snack"], "description": "A different meal, if it changes." },

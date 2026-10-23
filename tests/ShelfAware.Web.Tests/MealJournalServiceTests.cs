@@ -280,8 +280,25 @@ public class MealJournalServiceTests : IDisposable
         var theirs = await journal.LogAsync(Draft(food: "7 Brew chiller, large 32 oz", calories: 400, estimated: false));
 
         Assert.Null(lower.Entry);
-        Assert.StartsWith("Not logged: 400 calories for 7 Brew chiller, large 32 oz is less than the 450", lower.Problem);
+        Assert.StartsWith("Not saved: 400 calories for 7 Brew chiller, large 32 oz is less than the 450", lower.Problem);
         Assert.Null(theirs.Problem); // a number the person gave is theirs to give
+    }
+
+    [Fact]
+    public async Task A_correction_pricing_a_size_impossibly_is_refused_but_its_own_old_size_is_not_compared()
+    {
+        // Reginald's edit_meal writes estimates through UpdateAsync — the same check must stand there.
+        var journal = As(Jordan);
+        await journal.LogAsync(Draft(food: "7 Brew chiller, 32 oz", calories: 900, on: Today.AddDays(-1)));
+        var id = (await journal.LogAsync(Draft(food: "7 Brew chiller, 16 oz", calories: 450))).Entry!.Id;
+
+        var higher = await journal.UpdateAsync(id, Draft(food: "7 Brew chiller, 24 oz", calories: 1000));
+        // 24 oz at 400 is below the entry's own old 16 oz at 450 — which the correction replaces, so it isn't compared.
+        var resized = await journal.UpdateAsync(id, Draft(food: "7 Brew chiller, 24 oz", calories: 400));
+
+        Assert.StartsWith("Not saved: 1,000 calories for 7 Brew chiller, 24 oz is more than the 900", higher.Problem);
+        Assert.Null(resized.Problem);
+        Assert.Equal(400, (await journal.GetAsync(TodayOnly)).Entries.Single().Calories);
     }
 
     // --- privacy --------------------------------------------------------------------------------
@@ -313,9 +330,12 @@ public class MealJournalServiceTests : IDisposable
         // Reginald's edit tool reads an entry by the id it was told — another member's id must find nothing.
         var id = (await As(Jordan).LogAsync(Draft(food: "Jordan's lunch", calories: 450, estimated: false))).Entry!.Id;
 
-        Assert.Equal("Jordan's lunch", (await As(Jordan).GetEntryAsync(id))!.Food);
-        Assert.Null(await As(Spouse).GetEntryAsync(id));
-        Assert.Null(await As(Jordan).GetEntryAsync(id + 1));
+        Assert.Equal("Jordan's lunch", Assert.Single((await As(Jordan).GetEntryAsync(id)).Entries).Food);
+        Assert.Empty((await As(Spouse).GetEntryAsync(id)).Entries);
+        Assert.Empty((await As(Jordan).GetEntryAsync(id + 1)).Entries);
+        // Nobody signed in is said as that, not as "there is no such entry".
+        var nobody = await As(member: null).GetEntryAsync(id);
+        Assert.Equal((0, MealJournalService.NobodySignedIn), (nobody.Entries.Count, nobody.Problem));
     }
 
     [Fact]

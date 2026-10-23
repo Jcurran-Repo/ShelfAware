@@ -97,14 +97,22 @@ logging into one household see two journals. That is a structural guard, not a W
 - **Corrections by chat or voice** (2026-10-23): `edit_meal` changes one entry — size, food, calories,
   meal or day — named by the `[entry N]` that `MealJournal.EntryLine` puts on every entry Reginald is
   shown (the page's screen context, `log_meal`'s answer, `query_journal`'s day listing), so an id read in
-  one is the id the tool takes. Only what was said changes; a different food with no new number takes
-  the person's own number for it or must be re-estimated, never the old food's calories under a new
-  name. The write is `MealJournalService.UpdateAsync`, the page's own edit, so the rule applies.
+  one is the id the tool takes. Only what was said changes. The number follows `log_meal`'s rules: one
+  they said is theirs; the same food keeps its number and whose it is (echoing it back doesn't demote it
+  to an estimate); a different food takes their remembered number over any estimate (`MealJournal.Recall`)
+  and, with neither, is refused — never the old food's calories under a new name. A new portion must
+  come with the food's name, or the old size would stay in it. An edit that changes nothing writes
+  nothing and is refunded. The write is `MealJournalService.UpdateAsync`, the page's own edit, so the
+  rule applies — and the size check too, against every other entry (the one being corrected is left out:
+  its old size is what the edit replaces).
 - **The page is the context**: `MealJournal.ScreenContext` tells Reginald the day open and its entries;
   food told without a "when" goes on that day. The typed box, hold-to-talk and the roaming voice agent
-  (through `VoiceCoordinator.ScreenContext`, cleared when the page goes away) all get the same text.
+  (through `VoiceCoordinator.ScreenContext`, cleared when the page goes away, and never re-published by
+  a load that finishes after it) all get the same text. With nobody signed in nothing is said about the
+  day at all.
 - **"It" means what was just said**: the page's box keeps the last two exchanges (`RecentTurns`, shared
-  by typing and hold-to-talk) and replays them with each turn. A failed turn is not kept.
+  by typing and hold-to-talk) and replays them with each turn — a copy, so a turn finishing meanwhile
+  can't change another's history. A failed turn is not kept.
 
 ## Cost
 
