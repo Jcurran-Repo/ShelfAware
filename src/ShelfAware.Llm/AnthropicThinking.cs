@@ -34,34 +34,25 @@ internal static class AnthropicThinking
     public static bool TurnsOff(string? modelId) =>
         modelId is not null && ThinksUnlessTurnedOff.Contains(modelId);
 
-    /// <summary>The options a call is actually sent with. The model is the one the call names, else the
-    /// one the client was built for — the same precedence the adapter uses to pick the model, so this can
-    /// never turn thinking off for a model other than the one the request goes to. A caller that chose its
-    /// own <see cref="ReasoningOptions.Effort"/> keeps it; one that set only <see cref="ReasoningOptions.Output"/>
-    /// has said nothing about WHETHER to think, so it gets the rule with its Output kept. The caller's
-    /// instance is never mutated: the services reuse one <see cref="ChatOptions"/> across a retry or a
-    /// tool loop.</summary>
-    public static ChatOptions? Apply(ChatOptions? options, string boundModel)
-    {
-        if (options?.Reasoning?.Effort is not null || !TurnsOff(options?.ModelId ?? boundModel))
-            return options;
+    /// <summary>The Anthropic client the factory hands out: <paramref name="inner"/> behind the framework's
+    /// <c>ConfigureOptions</c> decorator, which clones the caller's options (or makes empty ones) and runs
+    /// <see cref="Configure"/> on the clone, for streaming and non-streaming calls alike. The caller's own
+    /// instance is never touched — the services reuse one <see cref="ChatOptions"/> across a retry and
+    /// across the chat's tool loop.</summary>
+    public static IChatClient Wrap(IChatClient inner, string boundModel) =>
+        inner.AsBuilder().ConfigureOptions(sent => Configure(sent, boundModel)).Build();
 
-        var sent = options?.Clone() ?? new ChatOptions();
+    /// <summary>Applies the rule to the options a call is about to be sent with. The model is the one the
+    /// call names, else the one the client was built for — the same precedence the adapter uses to pick
+    /// the model, so this can never turn thinking off for a model other than the one the request goes to.
+    /// A caller that chose its own <see cref="ReasoningOptions.Effort"/> keeps it; one that set only
+    /// <see cref="ReasoningOptions.Output"/> has said nothing about WHETHER to think, so it gets the rule
+    /// with its Output kept.</summary>
+    internal static void Configure(ChatOptions sent, string boundModel)
+    {
+        if (sent.Reasoning?.Effort is not null || !TurnsOff(sent.ModelId ?? boundModel)) return;
+
         sent.Reasoning ??= new ReasoningOptions();
         sent.Reasoning.Effort = ReasoningEffort.None;
-        return sent;
     }
-}
-
-/// <summary>Applies <see cref="AnthropicThinking"/> to every request on the Anthropic client the factory
-/// builds — the one choke point both the managed client and a visitor's own-key client pass through.</summary>
-internal sealed class AnthropicThinkingChatClient(IChatClient inner, string boundModel) : DelegatingChatClient(inner)
-{
-    public override Task<ChatResponse> GetResponseAsync(
-        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
-        base.GetResponseAsync(messages, AnthropicThinking.Apply(options, boundModel), cancellationToken);
-
-    public override IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
-        base.GetStreamingResponseAsync(messages, AnthropicThinking.Apply(options, boundModel), cancellationToken);
 }

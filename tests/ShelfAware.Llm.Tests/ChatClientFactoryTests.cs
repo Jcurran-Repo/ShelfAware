@@ -62,85 +62,78 @@ public class AnthropicThinkingTests
     public void Thinking_is_turned_off_only_where_it_is_on_by_default_and_off_is_accepted(string? model, bool off) =>
         Assert.Equal(off, AnthropicThinking.TurnsOff(model));
 
-    [Fact]
-    public void A_haiku_5_5_call_is_sent_with_thinking_off()
+    /// <summary>Sends one call through the factory's wrapping and returns the options the client beneath
+    /// it received — what the adapter would have turned into a request.</summary>
+    private static async Task<ChatOptions> Sent(ChatOptions? options, string boundModel = "claude-haiku-5-5")
     {
-        var sent = AnthropicThinking.Apply(new ChatOptions { ModelId = "claude-haiku-5-5", MaxOutputTokens = 64 }, "claude-haiku-5-5");
+        var inner = FakeChatClient.Returning(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok")));
+        using var client = AnthropicThinking.Wrap(inner, boundModel);
+        await client.GetResponseAsync("hi", options);
+        return inner.ReceivedOptions.Single()!;
+    }
 
-        Assert.Equal(ReasoningEffort.None, sent!.Reasoning!.Effort);
+    [Fact]
+    public async Task A_haiku_5_5_call_is_sent_with_thinking_off()
+    {
+        var sent = await Sent(new ChatOptions { ModelId = "claude-haiku-5-5", MaxOutputTokens = 64 });
+
+        Assert.Equal(ReasoningEffort.None, sent.Reasoning!.Effort);
         Assert.Equal(64, sent.MaxOutputTokens); // the rest of the call is untouched
     }
 
     [Fact]
-    public void A_call_with_no_options_takes_the_model_the_client_was_built_for()
+    public async Task A_call_with_no_options_takes_the_model_the_client_was_built_for()
     {
-        Assert.Equal(ReasoningEffort.None, AnthropicThinking.Apply(null, "claude-haiku-5-5")!.Reasoning!.Effort);
-        Assert.Null(AnthropicThinking.Apply(null, "claude-sonnet-5-5"));
+        Assert.Equal(ReasoningEffort.None, (await Sent(null, "claude-haiku-5-5")).Reasoning!.Effort);
+        Assert.Null((await Sent(null, "claude-sonnet-5-5")).Reasoning);
     }
 
     [Fact]
-    public void The_model_a_call_names_wins_over_the_one_the_client_was_built_for()
+    public async Task The_model_a_call_names_wins_over_the_one_the_client_was_built_for()
     {
         // The adapter sends ChatOptions.ModelId when set, so the decision has to follow the same model:
         // the extraction model can differ from the chat model the client was bound to.
-        var toSonnet = new ChatOptions { ModelId = "claude-sonnet-5-5" };
-        Assert.Same(toSonnet, AnthropicThinking.Apply(toSonnet, "claude-haiku-5-5"));
-
-        var toHaiku = AnthropicThinking.Apply(new ChatOptions { ModelId = "claude-haiku-5-5" }, "claude-sonnet-5-5");
-        Assert.Equal(ReasoningEffort.None, toHaiku!.Reasoning!.Effort);
+        Assert.Null((await Sent(new ChatOptions { ModelId = "claude-sonnet-5-5" }, "claude-haiku-5-5")).Reasoning);
+        Assert.Equal(ReasoningEffort.None,
+            (await Sent(new ChatOptions { ModelId = "claude-haiku-5-5" }, "claude-sonnet-5-5")).Reasoning!.Effort);
     }
 
     [Fact]
-    public void A_caller_that_chose_its_own_reasoning_keeps_it()
+    public async Task A_caller_that_chose_its_own_reasoning_keeps_it()
     {
         var own = new ChatOptions { ModelId = "claude-haiku-5-5", Reasoning = new ReasoningOptions { Effort = ReasoningEffort.Low } };
-        Assert.Same(own, AnthropicThinking.Apply(own, "claude-haiku-5-5"));
-        Assert.Equal(ReasoningEffort.Low, own.Reasoning!.Effort);
+        Assert.Equal(ReasoningEffort.Low, (await Sent(own)).Reasoning!.Effort);
     }
 
     [Fact]
-    public void A_caller_that_set_only_how_reasoning_is_shown_still_gets_thinking_off()
+    public async Task A_caller_that_set_only_how_reasoning_is_shown_still_gets_thinking_off()
     {
         // Output says nothing about WHETHER to think; with Effort null the adapter sends no thinking
         // config at all, and Haiku 5.5 would think.
         var shown = new ChatOptions { ModelId = "claude-haiku-5-5", Reasoning = new ReasoningOptions { Output = ReasoningOutput.None } };
-        var sent = AnthropicThinking.Apply(shown, "claude-haiku-5-5");
+        var sent = await Sent(shown);
 
-        Assert.Equal(ReasoningEffort.None, sent!.Reasoning!.Effort);
+        Assert.Equal(ReasoningEffort.None, sent.Reasoning!.Effort);
         Assert.Equal(ReasoningOutput.None, sent.Reasoning.Output);
         Assert.Null(shown.Reasoning!.Effort); // the caller's own ReasoningOptions is untouched
     }
 
     [Fact]
-    public void The_callers_options_are_never_mutated()
+    public async Task The_callers_options_are_never_mutated()
     {
         // The services reuse one ChatOptions across a retry and across the chat's tool loop.
         var mine = new ChatOptions { ModelId = "claude-haiku-5-5" };
-        var sent = AnthropicThinking.Apply(mine, "claude-haiku-5-5");
+        var sent = await Sent(mine);
 
         Assert.NotSame(mine, sent);
         Assert.Null(mine.Reasoning);
     }
 
     [Fact]
-    public async Task The_client_sends_every_call_through_the_rule()
-    {
-        var inner = FakeChatClient.Returning(new ChatResponse(new ChatMessage(ChatRole.Assistant, "a")),
-                                             new ChatResponse(new ChatMessage(ChatRole.Assistant, "b")));
-        using var client = new AnthropicThinkingChatClient(inner, "claude-haiku-5-5");
-
-        await client.GetResponseAsync("hi", new ChatOptions { ModelId = "claude-haiku-5-5" });
-        await client.GetResponseAsync("hi", new ChatOptions { ModelId = "claude-sonnet-5-5" });
-
-        Assert.Equal(ReasoningEffort.None, inner.ReceivedOptions[0]!.Reasoning!.Effort);
-        Assert.Null(inner.ReceivedOptions[1]!.Reasoning);
-    }
-
-    [Fact]
     public async Task The_streaming_path_goes_through_the_rule_too()
     {
         var inner = new StreamRecordingChatClient();
-        using var client = new AnthropicThinkingChatClient(inner, "claude-haiku-5-5");
+        using var client = AnthropicThinking.Wrap(inner, "claude-haiku-5-5");
 
         await foreach (var _ in client.GetStreamingResponseAsync("hi", new ChatOptions { ModelId = "claude-haiku-5-5" })) { }
 
@@ -176,7 +169,7 @@ public class AnthropicThinkingTests
              "usage":{"input_tokens":1,"output_tokens":1}}
             """));
         using var http = new HttpClient(handler);
-        using var client = new AnthropicThinkingChatClient(
+        using var client = AnthropicThinking.Wrap(
             new AnthropicClient { ApiKey = "sk-test", HttpClient = http, MaxRetries = 0 }.AsIChatClient(model), model);
 
         await client.GetResponseAsync("hi", new ChatOptions { ModelId = model, MaxOutputTokens = 64 });
@@ -208,7 +201,7 @@ public class AnthropicThinkingTests
     [Fact]
     public void The_factory_wraps_the_anthropic_client_in_the_rule()
     {
-        var client = new ChatClientFactory().Create(AiProvider.Anthropic, "sk-test", "claude-haiku-5-5");
-        Assert.IsType<AnthropicThinkingChatClient>(client);
+        using var client = new ChatClientFactory().Create(AiProvider.Anthropic, "sk-test", "claude-haiku-5-5");
+        Assert.NotNull(client.GetService<ConfigureOptionsChatClient>());
     }
 }

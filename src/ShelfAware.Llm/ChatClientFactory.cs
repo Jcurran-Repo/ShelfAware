@@ -29,7 +29,7 @@ public sealed class ChatClientFactory : IChatClientFactory
             // IChatClient and the provider is a pure swap here.
             // Wrapped so every Anthropic call is sent with AnthropicThinking's answer, whichever service
             // built the options.
-            AiProvider.Anthropic => new AnthropicThinkingChatClient(
+            AiProvider.Anthropic => AnthropicThinking.Wrap(
                 new AnthropicClient { ApiKey = apiKey }.AsIChatClient(model), model),
             AiProvider.OpenAI => new OpenAIClient(apiKey).GetChatClient(model).AsIChatClient(),
             AiProvider.OpenAICompatible => LocalOpenAiCompatible(apiKey, model, baseUrl),
