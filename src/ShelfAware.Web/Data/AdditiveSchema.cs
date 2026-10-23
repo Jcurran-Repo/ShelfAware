@@ -154,6 +154,14 @@ public static class AdditiveSchema
         // 2026-10-08: the meal journal — what each PERSON ate, per meal, with calories. The first per-member
         // table (IMemberOwned). A brand-new table is invisible to existing rows.
         EnsureTable(db, table: "JournalEntries");
+
+        // 2026-10-23: when the person gave an entry's calorie number — what "the number they last gave for
+        // this food" is ordered by, so a correction made today outranks a number logged yesterday. Rows that
+        // already hold the person's own number are BACKFILLED from LoggedAt, once, on the boot that adds the
+        // column (the UploadedAt precedent): the closest honest reading of when an existing number was given,
+        // and without it every correction made before this shipped would sort behind any made after.
+        if (EnsureColumn(db, table: "JournalEntries", column: "CaloriesGivenAt", definition: "TEXT NULL"))
+            Execute(db, "UPDATE JournalEntries SET CaloriesGivenAt = LoggedAt WHERE Calories IS NOT NULL AND CaloriesEstimated = 0;");
     }
 
     public static void Apply(AuthDbContext db)
