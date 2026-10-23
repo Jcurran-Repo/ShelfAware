@@ -80,7 +80,9 @@ public class ProviderCancellationSiteTests
     /// <para>⚠️ Also deliberately NOT the <c>IChatClient</c> decorators (<c>MeteredChatClient</c>,
     /// <c>ByokChatClient</c>): they pass a call through to the client beneath them, and the service that
     /// OWNS the call is the one that must guard it. Requiring a try in each decorator would add catches
-    /// that can only re-report what the owner already handles.</para></summary>
+    /// that can only re-report what the owner already handles. Those two sit outside this scope; a
+    /// decorator inside it (<c>AnthropicThinkingChatClient</c>, in <c>ShelfAware.Llm</c> beside the factory
+    /// that wraps it) is recognised by its <c>base.</c> pass-through instead.</para></summary>
     private static readonly string[] CallScope =
         [.. BoundaryScope, Path.Combine("src", "ShelfAware.Web", "Components")];
 
@@ -153,6 +155,10 @@ public class ProviderCancellationSiteTests
             {
                 if (call.Expression is not MemberAccessExpressionSyntax access
                     || !ProviderCalls.Contains(access.Name.Identifier.ValueText)) continue;
+                // A DelegatingChatClient handing the call to the client beneath it (`base.GetResponseAsync`)
+                // is a decorator, which the CallScope note exempts for its reason: the service that OWNS
+                // the call guards it. Narrowly `base.` — any other receiver is a call someone owns.
+                if (access.Expression is BaseExpressionSyntax) continue;
                 calls++;
                 if (!call.Ancestors().OfType<TryStatementSyntax>().Any(x => x.Catches.Any(CanReceiveCancellation)))
                     naked.Add($"{Path.GetFileName(file)}:{Line(call)}");

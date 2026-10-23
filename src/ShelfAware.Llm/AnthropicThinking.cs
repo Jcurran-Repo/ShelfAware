@@ -23,27 +23,32 @@ namespace ShelfAware.Llm;
 /// </summary>
 internal static class AnthropicThinking
 {
-    private static readonly HashSet<string> ThinksUnlessTurnedOff = new(StringComparer.OrdinalIgnoreCase)
+    // Ordinal and untrimmed on purpose: the adapter sends the model id exactly as given, so the rule
+    // matches exactly what goes on the wire. Haiku 5.5 has no dated snapshot or alias to also list.
+    private static readonly HashSet<string> ThinksUnlessTurnedOff = new(StringComparer.Ordinal)
     {
         "claude-haiku-5-5",
     };
 
     /// <summary>Whether a call to <paramref name="modelId"/> is sent with thinking turned off.</summary>
     public static bool TurnsOff(string? modelId) =>
-        modelId is not null && ThinksUnlessTurnedOff.Contains(modelId.Trim());
+        modelId is not null && ThinksUnlessTurnedOff.Contains(modelId);
 
     /// <summary>The options a call is actually sent with. The model is the one the call names, else the
     /// one the client was built for — the same precedence the adapter uses to pick the model, so this can
-    /// never turn thinking off for a model other than the one the request goes to. A caller that set its
-    /// own <see cref="ChatOptions.Reasoning"/> keeps it, and the caller's instance is never mutated: the
-    /// services reuse one <see cref="ChatOptions"/> across a retry or a tool loop.</summary>
+    /// never turn thinking off for a model other than the one the request goes to. A caller that chose its
+    /// own <see cref="ReasoningOptions.Effort"/> keeps it; one that set only <see cref="ReasoningOptions.Output"/>
+    /// has said nothing about WHETHER to think, so it gets the rule with its Output kept. The caller's
+    /// instance is never mutated: the services reuse one <see cref="ChatOptions"/> across a retry or a
+    /// tool loop.</summary>
     public static ChatOptions? Apply(ChatOptions? options, string boundModel)
     {
-        if (options?.Reasoning is not null || !TurnsOff(options?.ModelId ?? boundModel))
+        if (options?.Reasoning?.Effort is not null || !TurnsOff(options?.ModelId ?? boundModel))
             return options;
 
         var sent = options?.Clone() ?? new ChatOptions();
-        sent.Reasoning = new ReasoningOptions { Effort = ReasoningEffort.None };
+        sent.Reasoning ??= new ReasoningOptions();
+        sent.Reasoning.Effort = ReasoningEffort.None;
         return sent;
     }
 }

@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Anthropic;
 using Microsoft.Extensions.AI;
 using ShelfAware.Llm;
 
@@ -50,8 +52,8 @@ public class AnthropicThinkingTests
 {
     [Theory]
     [InlineData("claude-haiku-5-5", true)]
-    [InlineData("CLAUDE-HAIKU-5-5", true)]
-    [InlineData(" claude-haiku-5-5 ", true)]
+    [InlineData("CLAUDE-HAIKU-5-5", false)]  // the adapter sends the id as given, so the rule matches it as given
+    [InlineData(" claude-haiku-5-5 ", false)]
     [InlineData("claude-haiku-4-5-20251001", false)] // never thinks unless asked
     [InlineData("claude-sonnet-5-5", false)]         // rejects thinking: disabled with a 400
     [InlineData("claude-opus-5-5", false)]           // likewise
@@ -97,6 +99,19 @@ public class AnthropicThinkingTests
     }
 
     [Fact]
+    public void A_caller_that_set_only_how_reasoning_is_shown_still_gets_thinking_off()
+    {
+        // Output says nothing about WHETHER to think; with Effort null the adapter sends no thinking
+        // config at all, and Haiku 5.5 would think.
+        var shown = new ChatOptions { ModelId = "claude-haiku-5-5", Reasoning = new ReasoningOptions { Output = ReasoningOutput.None } };
+        var sent = AnthropicThinking.Apply(shown, "claude-haiku-5-5");
+
+        Assert.Equal(ReasoningEffort.None, sent!.Reasoning!.Effort);
+        Assert.Equal(ReasoningOutput.None, sent.Reasoning.Output);
+        Assert.Null(shown.Reasoning!.Effort); // the caller's own ReasoningOptions is untouched
+    }
+
+    [Fact]
     public void The_callers_options_are_never_mutated()
     {
         // The services reuse one ChatOptions across a retry and across the chat's tool loop.
@@ -119,6 +134,75 @@ public class AnthropicThinkingTests
 
         Assert.Equal(ReasoningEffort.None, inner.ReceivedOptions[0]!.Reasoning!.Effort);
         Assert.Null(inner.ReceivedOptions[1]!.Reasoning);
+    }
+
+    [Fact]
+    public async Task The_streaming_path_goes_through_the_rule_too()
+    {
+        var inner = new StreamRecordingChatClient();
+        using var client = new AnthropicThinkingChatClient(inner, "claude-haiku-5-5");
+
+        await foreach (var _ in client.GetStreamingResponseAsync("hi", new ChatOptions { ModelId = "claude-haiku-5-5" })) { }
+
+        Assert.Equal(ReasoningEffort.None, inner.Received!.Reasoning!.Effort);
+    }
+
+    // ⚠️ The two tests below are the ones that matter: everything above checks the ChatOptions handed
+    // DOWN, and the rule is only right if the Anthropic adapter turns ReasoningEffort.None into
+    // thinking: disabled — not a token budget (a 400 on Haiku 5.5) and not nothing (thinking on). An SDK
+    // bump that changes that mapping fails here, on the request body the API would actually receive.
+    [Fact]
+    public async Task On_the_wire_a_haiku_5_5_call_is_sent_with_thinking_disabled()
+    {
+        using var body = await SentBody("claude-haiku-5-5");
+
+        var thinking = body.RootElement.GetProperty("thinking");
+        Assert.Equal("disabled", thinking.GetProperty("type").GetString());
+        Assert.False(thinking.TryGetProperty("budget_tokens", out _));
+    }
+
+    [Fact]
+    public async Task On_the_wire_a_sonnet_5_5_call_carries_no_thinking_config()
+    {
+        using var body = await SentBody("claude-sonnet-5-5");
+        Assert.False(body.RootElement.TryGetProperty("thinking", out _));
+    }
+
+    private static async Task<JsonDocument> SentBody(string model)
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json($$"""
+            {"id":"msg_1","type":"message","role":"assistant","model":"{{model}}",
+             "content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","stop_sequence":null,
+             "usage":{"input_tokens":1,"output_tokens":1}}
+            """));
+        using var http = new HttpClient(handler);
+        using var client = new AnthropicThinkingChatClient(
+            new AnthropicClient { ApiKey = "sk-test", HttpClient = http, MaxRetries = 0 }.AsIChatClient(model), model);
+
+        await client.GetResponseAsync("hi", new ChatOptions { ModelId = model, MaxOutputTokens = 64 });
+
+        return JsonDocument.Parse(handler.Requests.Single().Body);
+    }
+
+    private sealed class StreamRecordingChatClient : IChatClient
+    {
+        public ChatOptions? Received { get; private set; }
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            Received = options;
+            await Task.CompletedTask;
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "a");
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
     }
 
     [Fact]

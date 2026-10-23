@@ -215,7 +215,9 @@ every figure below was measured, was $1.00 / $5.00 (verified 2026-08-23). ⚠️
 same text as ~30% more tokens, so the net cost of an action falls by roughly **7–8×**, not 10×: the cost
 ranges in the table below are Haiku 4.5's and are now ceilings. Credit prices are per action, not per token,
 so they do not move with the model — what moves is the margin under them. `AiPricing` carries the ≤100K card
-only, so a call past 100K would be stamped at a fifth of its cost; nothing here sends one.
+only, so a call past 100K would be stamped at a fifth of its cost. No measured call comes near it (the largest,
+a chat turn, is ~4–10k per round), but nothing GUARDS it: a household with a very large catalog and a long
+chat history is the case to re-measure from `AiUsage` if one appears.
 
 Image input ≈ (w×h)/750 tokens; receipts resize to 1568px max edge (`LlmOptions.MaxImageEdgePx`), so
 ~1.2–3.3k tokens per photo.
