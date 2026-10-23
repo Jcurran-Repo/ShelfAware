@@ -33,15 +33,13 @@
 
         @* A tap on any link both navigates and (via bubbling) folds the mobile drawer. *@
         <nav aria-label="Primary" @onclick="() => navOpen = false">
-            @* The page list is SiteNav's — the bug form's "where" dropdown renders the same one, so a
-               new page appears in both or neither. Only "/" needs Match=All (Prefix would light it on
-               every page); NavLink's Prefix match is segment-aware, so /receipt does NOT light on
-               /receipts. *@
+            @* One link per SiteNav section, lit on every page of its tab strip. The bug form's "where"
+               dropdown lists the same sections' pages, so a new page appears in both or neither. *@
             @* ⚠️ Loop variable must not be named `page` — Razor reads inline `@page.` as the @page
                DIRECTIVE (the same reserved-word class as lowercase <text>). *@
-            @foreach (var entry in SiteNav.Pages)
+            @foreach (var group in SiteNav.Sections)
             {
-                <NavLink href="@entry.Href" Match="@MatchFor(entry)">@entry.Label</NavLink>
+                <SiteNavLink Page="@group.Home" Section="@group" />
             }
         </nav>
 
@@ -69,6 +67,7 @@
     @* `inert` while the drawer is open takes the obscured page behind the backdrop out of tab/AT reach. *@
     <div class="content" inert="@navOpen">
         <main id="main-content" class="site-main">
+            <SectionTabs />
             @Body
         </main>
         <SiteFooter />
@@ -143,7 +142,4 @@
             restoreFocusOnClose = false;
         }
     }
-
-    private static NavLinkMatch MatchFor(SiteNav.Page page) =>
-        page.Href == "/" ? NavLinkMatch.All : NavLinkMatch.Prefix;
 }
