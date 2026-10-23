@@ -385,4 +385,77 @@ public class MealJournalTests
         // so "unset" has to be exactly empty, never a placeholder that would read as someone else.
         Assert.Equal("", new JournalEntry { Food = "Toast" }.MemberId);
     }
+
+    // --- remembered numbers ---------------------------------------------------------------------
+
+    private static JournalDraft D(string food, int? calories, bool estimated = true) =>
+        new(food, MealSlot.Snack, Thursday, calories, estimated);
+
+    [Fact]
+    public void Only_a_number_the_person_gave_is_their_own()
+    {
+        Assert.True(MealJournal.IsOwnNumber(E(Thursday, 480)));
+        Assert.False(MealJournal.IsOwnNumber(E(Thursday, 480, estimated: true)));
+        Assert.False(MealJournal.IsOwnNumber(E(Thursday, null)));
+        Assert.True(D("x", 480, estimated: false).IsOwnNumber);
+        Assert.False(D("x", 480, estimated: true).IsOwnNumber);
+        Assert.False(D("x", null, estimated: false).IsOwnNumber);
+    }
+
+    [Theory]
+    [InlineData("7 Brew Blondie, medium", "7 brew blondie, medium")]
+    [InlineData("  7 Brew\tBlondie,   medium ", "7 brew blondie, medium")]
+    public void A_food_is_compared_ignoring_case_and_spacing(string food, string key)
+    {
+        Assert.Equal(key, MealJournal.FoodKey(food));
+    }
+
+    [Fact]
+    public void A_size_makes_it_a_different_food()
+    {
+        Assert.NotEqual(MealJournal.FoodKey("Blondie, medium"), MealJournal.FoodKey("Blondie, large"));
+    }
+
+    [Fact]
+    public void Each_food_is_remembered_once_at_its_latest_own_number_most_recent_first()
+    {
+        var oldBlondie = E(Thursday, 240, food: "7 Brew Blondie");
+        var apple = E(Thursday, 95, food: "Apple");
+        var newBlondie = E(Thursday, 480, food: " 7 brew  BLONDIE ");
+        var laterEstimate = E(Thursday, 300, estimated: true, food: "7 Brew Blondie");
+        var blank = E(Thursday, null, food: "Apple");
+
+        var remembered = MealJournal.Remembered([newBlondie, oldBlondie, laterEstimate, apple, blank]);
+
+        Assert.Equal([new RememberedCalories("7 brew  BLONDIE", 480), new RememberedCalories("Apple", 95)], remembered);
+    }
+
+    [Fact]
+    public void An_estimate_or_a_blank_gives_way_to_the_persons_remembered_number()
+    {
+        RememberedCalories[] remembered = [new("Apple", 95), new("7 Brew Blondie", 480)];
+
+        var (estimate, fromEstimate) = MealJournal.Recall(D("7 brew blondie", 240), remembered);
+        var (blank, fromBlank) = MealJournal.Recall(D("7 Brew Blondie", null, estimated: false), remembered);
+
+        Assert.Equal((D("7 brew blondie", 480, estimated: false), true), (estimate, fromEstimate));
+        Assert.Equal((D("7 Brew Blondie", 480, estimated: false), true), (blank, fromBlank));
+    }
+
+    [Fact]
+    public void A_number_the_person_gives_now_is_never_overridden()
+    {
+        var draft = D("7 Brew Blondie", 520, estimated: false);
+
+        Assert.Equal((draft, false), MealJournal.Recall(draft, [new RememberedCalories("7 Brew Blondie", 480)]));
+    }
+
+    [Fact]
+    public void A_food_with_nothing_remembered_is_written_as_it_came()
+    {
+        var draft = D("Pretzel", 380);
+
+        Assert.Equal((draft, false), MealJournal.Recall(draft, [new RememberedCalories("Apple", 95)]));
+        Assert.Equal((draft, false), MealJournal.Recall(draft, []));
+    }
 }

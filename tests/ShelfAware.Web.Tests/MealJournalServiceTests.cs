@@ -121,6 +121,76 @@ public class MealJournalServiceTests : IDisposable
         Assert.Empty((await journal.GetAsync(TodayOnly)).Entries);
     }
 
+    // --- remembered numbers ---------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_corrected_number_is_used_the_next_time_that_food_is_logged()
+    {
+        // The 7 Brew case: Reginald's guess was half the real drink; the person fixes it once.
+        var journal = As(Jordan);
+        var first = (await journal.LogAsync(Draft(food: "7 Brew Blondie, medium", calories: 240))).Entry!;
+        await journal.UpdateAsync(first.Id, Draft(food: "7 Brew Blondie, medium", calories: 480, estimated: false));
+
+        var next = await journal.LogAsync(Draft(food: "7 brew blondie,  MEDIUM", calories: 250, on: Today.AddDays(-1)));
+
+        Assert.True(next.Recalled);
+        Assert.Equal((480, false), (next.Entry!.Calories, next.Entry.CaloriesEstimated));
+        Assert.Equal([new RememberedCalories("7 Brew Blondie, medium", 480)], await journal.RememberedAsync());
+    }
+
+    [Fact]
+    public async Task A_number_given_now_is_kept_and_becomes_the_one_remembered()
+    {
+        var journal = As(Jordan);
+        await journal.LogAsync(Draft(food: "Latte", calories: 300, estimated: false));
+
+        var stated = await journal.LogAsync(Draft(food: "Latte", calories: 350, estimated: false));
+
+        Assert.False(stated.Recalled);
+        Assert.Equal(350, stated.Entry!.Calories);
+        Assert.Equal([new RememberedCalories("Latte", 350)], await journal.RememberedAsync());
+    }
+
+    [Fact]
+    public async Task An_estimate_for_a_food_with_no_number_of_the_persons_stays_an_estimate()
+    {
+        var journal = As(Jordan);
+        await journal.LogAsync(Draft(food: "Latte", calories: 300, estimated: true));
+
+        var next = await journal.LogAsync(Draft(food: "Latte", calories: 310, estimated: true));
+
+        Assert.False(next.Recalled);
+        Assert.Equal((310, true), (next.Entry!.Calories, next.Entry.CaloriesEstimated));
+        Assert.Empty(await journal.RememberedAsync());
+    }
+
+    [Fact]
+    public async Task A_restore_puts_the_entry_back_as_it_was_without_recalling()
+    {
+        // The page's undo: an estimate removed and put back is the same estimate, not a different number.
+        var journal = As(Jordan);
+        await journal.LogAsync(Draft(food: "Eggs", calories: 150, estimated: false, on: Today.AddDays(-1)));
+
+        var restored = await journal.RestoreAsync(Draft(food: "Eggs", calories: 200, estimated: true));
+
+        Assert.False(restored.Recalled);
+        Assert.Equal((200, true), (restored.Entry!.Calories, restored.Entry.CaloriesEstimated));
+    }
+
+    [Fact]
+    public async Task One_members_remembered_number_is_never_used_for_another()
+    {
+        await As(Jordan).LogAsync(Draft(food: "Latte", calories: 480, estimated: false));
+
+        var spouse = As(Spouse);
+        var theirs = await spouse.LogAsync(Draft(food: "Latte", calories: 200, estimated: true));
+
+        Assert.False(theirs.Recalled);
+        Assert.Equal(200, theirs.Entry!.Calories);
+        Assert.Empty(await spouse.RememberedAsync());
+        Assert.Empty(await As(member: null).RememberedAsync());
+    }
+
     // --- privacy --------------------------------------------------------------------------------
 
     [Fact]

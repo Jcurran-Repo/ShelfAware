@@ -41,6 +41,21 @@ logging into one household see two journals. That is a structural guard, not a W
 - Reginald estimates calories for the portion described (`log_meal`'s `calories`), and the entry is
   marked `CaloriesEstimated`. A number the person **said** (`calories_stated`) or **typed** on the page
   is theirs and is not an estimate; editing an estimated number on the page makes it theirs.
+- **A correction is remembered** (2026-10-23, after a 7 Brew drink came in at half its real calories).
+  Any number that is the person's own — said, typed, or corrected on the page (`MealJournal.IsOwnNumber`)
+  — becomes the number for that food: the next time the same food is logged without a number of its own
+  (Reginald's estimate, a saved recipe's figure, or a blank typed by hand), the write path uses theirs and
+  stores it as theirs (`MealJournal.Recall`, applied in `MealJournalService.LogAsync`, so the voice and the
+  page's add form behave the same). "Same food" is `MealJournal.FoodKey`: case and spacing don't matter,
+  anything else does — a medium and a large are different foods. The latest own number wins, by entry id.
+  There is no separate table: the journal is the memory, so export and delete already cover it, and
+  removing every entry with a number forgets it. The page's undo uses `RestoreAsync`, which does not
+  recall, so a removed estimate comes back as it was.
+- Reginald is given the person's remembered foods (the 40 most recent) in the prompt and told to reuse
+  those names exactly, since recall only matches the same food. For a chain's drink or menu item he is
+  told to price that chain's own size and put the size he assumed in the food name — the likely cause of
+  the halved 7 Brew drink is a generic-cup guess against 7 Brew's much larger cups (unconfirmed: the
+  logged row wasn't inspected).
 - A food that is one of the household's saved recipes is logged at the recipe's own
   `EstimatedCaloriesPerServing` × servings — the figure the Reports tab's calories-cooked chart uses —
   rather than a fresh guess, so two screens never price the same dish differently.

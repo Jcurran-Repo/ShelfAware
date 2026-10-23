@@ -19,13 +19,42 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
     internal const string NobodySignedIn =
         "The meal journal needs someone signed in — it keeps each person's meals separately.";
 
-    public async Task<JournalWrite> LogAsync(JournalDraft draft, CancellationToken cancellationToken = default)
+    /// <summary>Record one food. A draft without the person's own number takes the one they last gave for that
+    /// food (<see cref="MealJournal.Recall"/>) — here, on the write path, so Reginald and the page's add form
+    /// cannot disagree about whether a correction is remembered.</summary>
+    public Task<JournalWrite> LogAsync(JournalDraft draft, CancellationToken cancellationToken = default) =>
+        WriteAsync(draft, recall: true, cancellationToken);
+
+    /// <summary>Put a removed entry back exactly as it was — the page's undo. No recall: an undo that came back
+    /// with a different number would not be an undo.</summary>
+    public Task<JournalWrite> RestoreAsync(JournalDraft draft, CancellationToken cancellationToken = default) =>
+        WriteAsync(draft, recall: false, cancellationToken);
+
+    public async Task<IReadOnlyList<RememberedCalories>> RememberedAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        if (db.MemberId is null) return [];
+        return await RememberedAsync(db, cancellationToken);
+    }
+
+    private static async Task<IReadOnlyList<RememberedCalories>> RememberedAsync(
+        ShelfAwareDbContext db, CancellationToken cancellationToken) =>
+        // The WHERE only narrows the read; MealJournal.Remembered applies the rule itself.
+        MealJournal.Remembered(await db.JournalEntries
+            .AsNoTracking()
+            .Where(e => e.Calories != null && !e.CaloriesEstimated)
+            .ToListAsync(cancellationToken));
+
+    private async Task<JournalWrite> WriteAsync(JournalDraft draft, bool recall, CancellationToken cancellationToken)
     {
         if (MealJournal.Problem(draft.Food, draft.Calories, draft.EatenOn, Today) is { } problem)
             return JournalWrite.Refused(problem);
 
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         if (db.MemberId is null) return JournalWrite.Refused(NobodySignedIn);
+
+        var recalled = false;
+        if (recall) (draft, recalled) = MealJournal.Recall(draft, await RememberedAsync(db, cancellationToken));
 
         var entry = new JournalEntry
         {
@@ -38,7 +67,7 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
         };
         db.JournalEntries.Add(entry);
         await db.SaveChangesAsync(cancellationToken);
-        return JournalWrite.Saved(entry);
+        return JournalWrite.Saved(entry, recalled);
     }
 
     public async Task<JournalRead> GetAsync(DateSpan span, CancellationToken cancellationToken = default)

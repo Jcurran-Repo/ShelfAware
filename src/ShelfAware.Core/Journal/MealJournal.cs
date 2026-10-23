@@ -46,6 +46,9 @@ public sealed record CalorieTotal(int Calories, int Counted, int Uncounted, bool
         : $"{Uncounted} {(Uncounted == 1 ? "item has" : "items have")} no calorie count";
 }
 
+/// <summary>A food the person has given their own calorie number for, as they last wrote it, and that number.</summary>
+public sealed record RememberedCalories(string Food, int Calories);
+
 /// <summary>One meal on one day: its slot, the foods in it in the order they were logged, and their total.</summary>
 public sealed record JournalMeal(MealSlot Slot, IReadOnlyList<JournalEntry> Items, CalorieTotal Total);
 
@@ -155,6 +158,39 @@ public static class MealJournal
         if (calories > MaxCalories) return $"{Number(calories.Value)} calories is more than one entry can hold (the most is {Number(MaxCalories)}) — split it into the foods it was.";
         if (eatenOn > today) return "That day hasn't happened yet — the journal only records what was already eaten.";
         return null;
+    }
+
+    /// <summary>True when the entry's calories are the person's own — a number they said or typed, or one they
+    /// corrected — rather than an estimate or a blank. The one reading of "theirs" that the journal remembers.</summary>
+    public static bool IsOwnNumber(JournalEntry entry) => entry.Calories is not null && !entry.CaloriesEstimated;
+
+    /// <summary>The form two descriptions of a food are compared in: case and spacing don't make it a different
+    /// food ("7 Brew  Blondie" is "7 brew blondie"); anything else — a size, a count — does, because a medium
+    /// and a large are not the same number.</summary>
+    public static string FoodKey(string food) =>
+        string.Join(' ', food.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
+
+    /// <summary>Every food the person has put their own number on, once each, most recently logged first, at
+    /// the number from that latest entry — so a correction made today replaces the one made last month.</summary>
+    public static IReadOnlyList<RememberedCalories> Remembered(IEnumerable<JournalEntry> history) =>
+    [
+        .. history
+            .Where(IsOwnNumber)
+            .OrderByDescending(e => e.Id)
+            .DistinctBy(e => FoodKey(e.Food))
+            .Select(e => new RememberedCalories(e.Food.Trim(), e.Calories!.Value)),
+    ];
+
+    /// <summary>THE override rule: a draft that carries the person's own number is written as it is; any other
+    /// — an estimate, a saved recipe's figure, or no number at all — gives way to the number the person last
+    /// gave for that same food. The recalled number is theirs, so it is not marked an estimate.</summary>
+    public static (JournalDraft Draft, bool Recalled) Recall(JournalDraft draft, IEnumerable<RememberedCalories> remembered)
+    {
+        if (draft.IsOwnNumber) return (draft, false);
+        var key = FoodKey(draft.Food);
+        return remembered.FirstOrDefault(r => FoodKey(r.Food) == key) is { } hit
+            ? (draft with { Calories = hit.Calories, CaloriesEstimated = false }, true)
+            : (draft, false);
     }
 
     /// <summary>How a span is named, on the page's headings and in Reginald's answers alike.</summary>
