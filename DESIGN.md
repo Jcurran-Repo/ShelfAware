@@ -52,7 +52,7 @@ A single-user web app answering one question: **"What am I about to run out of?"
 | Runtime | .NET 10 (LTS) |
 | Web/UI | Blazor (Interactive Server) — single project, C# end-to-end |
 | Data | EF Core + SQLite (single file, no migrations) |
-| LLM | Anthropic Messages API; extraction + chat on `claude-haiku-4-5-20251001` (cheap, vision). Pin versioned IDs, never aliases. Config-switchable to Sonnet for hard receipts. |
+| LLM | Anthropic Messages API; extraction + chat on `claude-haiku-5-5` (cheap, vision; thinking sent off — `AnthropicThinking`). Pin fixed IDs, never aliases. Config-switchable to Sonnet for hard receipts. |
 | Secrets | `dotnet user-secrets` locally; App Service settings on Azure. Never commit keys. |
 | Hosting | Azure App Service (Linux, F1/B1); SQLite under `/home/data/` (persisted) |
 | Tests | xUnit — prediction engine + extraction eval harness |

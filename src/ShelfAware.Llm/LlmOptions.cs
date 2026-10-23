@@ -5,9 +5,13 @@ public class LlmOptions
     public const string SectionName = "Llm";
 
     public string Provider { get; set; } = "Anthropic";
-    /// <summary>Pinned versioned model ID — never aliases (DESIGN.md §2).</summary>
-    public string ExtractionModel { get; set; } = "claude-haiku-4-5-20251001";
-    public string ChatModel { get; set; } = "claude-haiku-4-5-20251001";
+    /// <summary>The model every AI service runs on unless configured otherwise — ONE definition, which the
+    /// Settings picker also offers first. Pinned, never an alias (DESIGN.md §2): <c>claude-haiku-5-5</c> is a
+    /// fixed ID with no dated snapshot, so nothing moves under it.</summary>
+    public const string DefaultModel = "claude-haiku-5-5";
+
+    public string ExtractionModel { get; set; } = DefaultModel;
+    public string ChatModel { get; set; } = DefaultModel;
     public int MaxImageEdgePx { get; set; } = 1568;
     public string ApiKey { get; set; } = "";
 

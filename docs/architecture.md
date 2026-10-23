@@ -136,7 +136,9 @@ the same item bought across brands/sizes rolls up into one product.
   provider appears. Chat = manual tool-call loop over `Messages.Create` (§7 Option B).
 - **Structured outputs** (`OutputConfig`/`JsonOutputFormat`) enforce the §5 schema server-side,
   plus the spec's validate-and-retry-once in C#. Schema omits `minimum`/`maximum` on confidence
-  (unsupported in strict mode) — clamped in code. Extraction model pinned `claude-haiku-4-5-20251001`.
+  (unsupported in strict mode) — clamped in code. Extraction model pinned `claude-haiku-5-5`
+  (was `claude-haiku-4-5-20251001` until 2026-10-23). Haiku 5.5 thinks by default; every Anthropic call is
+  sent with thinking off by `AnthropicThinking` at the factory, so the prompts run as they did on 4.5.
 - **`IPantryStore` (Core/Chat) is the chat data port** — Core defines it, Web implements
   `EfPantryStore`, so the chat layer touches no EF. Fuzzy name→product resolution in
   `ProductMatcher` (Core, unit-tested): exact → substring → IDF-weighted token-overlap ≥ 0.5
