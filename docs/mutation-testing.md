@@ -85,6 +85,19 @@ is not 100%; it is undefined, and the gate now says so instead of passing. The w
 publisher applies the same refusal in the other direction: a report with nothing testable leaves the
 last real number standing rather than overwriting it.
 
+⚠️ **Narrowed 2026-10-23, with Jordan's approval: "zero testable" alone is not the hole.** A diff-scoped
+report keeps the baseline's compile errors Core-wide (~590 of them, in files nobody touched): `--since`
+Ignores out-of-diff mutants but leaves those as CompileError. So zero testable is also exactly what a
+PR looks like when its Core change produces no mutants at all, such as a new enum member or an
+interface signature change. PRs #91 and #93 were both held red on that and nothing else. A
+zero-testable run now still fails in each shape of the real hole:
+- the Core tests changed, yet nothing was re-tested;
+- a changed Core file matches no single report entry, so the report never provably read it;
+- a changed Core file has CompileError mutants (the WaveAudio shape).
+
+Otherwise it passes, with a notice naming the files it read. Each branch was checked against a real
+report with a probe commit.
+
 ## Scope-tuning outcome (2026-08-25): nothing honest to exclude
 
 Before the sweep, a per-file audit of the baseline (the JSON report) settled whether any Core files
