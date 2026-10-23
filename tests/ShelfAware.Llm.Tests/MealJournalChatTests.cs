@@ -100,7 +100,7 @@ public class MealJournalChatTests
         var yesterday = Today.AddDays(-1);
         var client = Script(
             Responses.Call("log_meal", ("food", "pizza"), ("meal", "Dinner"), ("portion", "2 slices"), ("calories", 600), ("date", yesterday.ToString("yyyy-MM-dd"))),
-            Responses.Call("log_meal", ("food", "apple"), ("meal", "Snack"), ("portion", "1"), ("calories", 95)));
+            Responses.Call("log_meal", ("food", "1 apple"), ("meal", "Snack"), ("portion", "1"), ("calories", 95)));
 
         await Chat(client, journal).HandleAsync("pizza last night and an apple just now");
 
@@ -205,7 +205,7 @@ public class MealJournalChatTests
         store.Recipes.Add(new RecipeRef(7, "Chicken Chili", HasSteps: true, CaloriesPerServing: 420));
         var journal = new FakeMealJournal();
         var client = Script(Responses.Call("log_meal",
-            ("food", "chili"), ("meal", "Dinner"), ("portion", "a bowl"), ("calories_stated", true), ("recipe_name", "chili")));
+            ("food", "chili"), ("meal", "Dinner"), ("servings", 1), ("calories_stated", true), ("recipe_name", "chili")));
 
         await Chat(client, journal, store).HandleAsync("I had the chicken chili");
 
@@ -289,6 +289,63 @@ public class MealJournalChatTests
         await Chat(client, journal).HandleAsync("a large white chocolate mocha chiller");
 
         Assert.Equal(900, Assert.Single(journal.Drafts).Calories);
+    }
+
+    [Fact]
+    public async Task The_portion_they_said_becomes_part_of_the_food_unless_the_name_already_says_it()
+    {
+        var journal = new FakeMealJournal();
+        var client = Script(
+            Responses.Call("log_meal", ("food", "7 Brew chiller"), ("meal", "Snack"), ("calories", 900), ("portion", "32 oz")),
+            Responses.Call("log_meal", ("food", "2 scrambled eggs"), ("meal", "Breakfast"), ("calories", 180), ("portion", "2")));
+
+        await Chat(client, journal).HandleAsync("a 32 oz chiller and two eggs");
+
+        Assert.Equal(["7 Brew chiller, 32 oz", "2 scrambled eggs"], journal.Drafts.Select(d => d.Food));
+    }
+
+    [Fact]
+    public async Task A_size_they_said_is_not_overridden_by_another_sizes_remembered_number()
+    {
+        var journal = new FakeMealJournal();
+        journal.Entries.Add(Own("chiller", 900)); // the large, before sizes were in the name
+        var client = Script(Responses.Call("log_meal", ("food", "chiller"), ("meal", "Snack"), ("calories", 450), ("portion", "small")));
+
+        await Chat(client, journal).HandleAsync("a small chiller");
+
+        Assert.Equal(("chiller, small", 450, true), (journal.Entries[^1].Food, journal.Entries[^1].Calories, journal.Entries[^1].CaloriesEstimated));
+    }
+
+    [Fact]
+    public async Task Servings_only_excuse_the_portion_when_a_saved_recipe_priced_them()
+    {
+        // No recipe, or one with no calorie figure: the servings are ignored, so the model's guess would be
+        // what gets written — exactly the guess the question exists to stop.
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(7, "Plain Rice", HasSteps: false, CaloriesPerServing: null));
+        var journal = new FakeMealJournal();
+        var client = Script(
+            Responses.Call("log_meal", ("food", "chiller"), ("meal", "Snack"), ("calories", 450), ("servings", 1)),
+            Responses.Call("log_meal", ("food", "rice"), ("meal", "Dinner"), ("calories", 300), ("servings", 1), ("recipe_name", "Plain Rice")));
+
+        await Chat(client, journal, store).HandleAsync("a chiller, and some rice");
+
+        Assert.Empty(journal.Drafts);
+        Assert.Equal($"{AnthropicPantryChat.AskPortion} | {AnthropicPantryChat.AskPortion}", ToolReply(client));
+    }
+
+    [Fact]
+    public async Task A_saved_recipe_with_no_servings_said_is_asked_about_too()
+    {
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(7, "Chicken Chili", HasSteps: true, CaloriesPerServing: 420));
+        var journal = new FakeMealJournal();
+        var client = Script(Responses.Call("log_meal", ("food", "chili"), ("meal", "Dinner"), ("portion", "a bowl"), ("recipe_name", "chili")));
+
+        await Chat(client, journal, store).HandleAsync("I had the chili");
+
+        Assert.Empty(journal.Drafts);
+        Assert.Equal(AnthropicPantryChat.AskPortion, ToolReply(client));
     }
 
     [Fact]

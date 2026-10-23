@@ -28,6 +28,10 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
         if (db.MemberId is null) return JournalWrite.Refused(NobodySignedIn);
 
         var (written, recalled) = MealJournal.Recall(draft, await RememberedAsync(db, cancellationToken));
+        // An estimate that prices a bigger size below a smaller one already logged (or the reverse) is wrong
+        // on its face — refused here, on the write path, so no surface can store one.
+        if (MealJournal.SizeConflict(written, await SizedAsync(db, cancellationToken)) is { } other)
+            return JournalWrite.Refused(MealJournal.SizeConflictProblem(written, other));
         // A recalled number was given before, not now: it carries no stamp, so it can never outrank the
         // correction it came from, nor rename the food that correction is remembered by.
         var given = !recalled && MealJournal.GivesNumber(before: null, written);
@@ -60,6 +64,14 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
             .AsNoTracking()
             .Where(MealJournal.HasOwnNumber)
             .ToListAsync(cancellationToken));
+
+    /// <summary>The entries a size can be compared against — ones with a number whose name may state ounces.
+    /// The LIKE only narrows the read; <see cref="MealJournal.SizeConflict"/> parses the sizes itself.</summary>
+    private static async Task<List<JournalEntry>> SizedAsync(ShelfAwareDbContext db, CancellationToken cancellationToken) =>
+        await db.JournalEntries
+            .AsNoTracking()
+            .Where(e => e.Calories != null && (EF.Functions.Like(e.Food, "%oz%") || EF.Functions.Like(e.Food, "%ounce%")))
+            .ToListAsync(cancellationToken);
 
     /// <summary>The one insert. The rule is asked here, on what is actually written — after a recall has
     /// swapped in a remembered number, so a stored number cannot slip past a bound tightened since.</summary>

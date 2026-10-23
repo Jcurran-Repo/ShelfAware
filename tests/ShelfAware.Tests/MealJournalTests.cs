@@ -512,6 +512,109 @@ public class MealJournalTests
         Assert.Null(MealJournal.Find("Apple", []));
     }
 
+    [Theory]
+    [InlineData("7 Brew chiller", "32 oz", "7 Brew chiller, 32 oz")]
+    [InlineData("  7 Brew chiller ", "large", "7 Brew chiller, large")]
+    [InlineData("7 Brew chiller", " large\n 32 oz ", "7 Brew chiller, large 32 oz")]
+    [InlineData("7 Brew chiller, LARGE", "large", "7 Brew chiller, LARGE")]
+    [InlineData("2 scrambled eggs", "2", "2 scrambled eggs")]
+    [InlineData("toast", null, "toast")]
+    [InlineData("toast", "  ", "toast")]
+    public void A_portion_joins_the_name_unless_the_name_already_says_it(string food, string? portion, string expected)
+    {
+        Assert.Equal(expected, MealJournal.WithPortion(food, portion));
+    }
+
+    [Theory]
+    [InlineData("7 Brew chiller, large 32 oz", "32")]
+    [InlineData("chiller 16oz", "16")]
+    [InlineData("latte, 12 fl oz", "12")]
+    [InlineData("latte, 12 fl. oz", "12")]
+    [InlineData("soda 20 OUNCE", "20")]
+    [InlineData("juice, 7.5 ounces", "7.5")]
+    public void Ounces_are_read_off_the_name(string food, string ounces)
+    {
+        Assert.Equal(decimal.Parse(ounces, System.Globalization.CultureInfo.InvariantCulture), MealJournal.Ounces(food));
+    }
+
+    [Theory]
+    [InlineData("chiller, large")]
+    [InlineData("2 ozzies")]
+    [InlineData("3 eggs")]
+    public void A_name_with_no_ounces_has_no_size(string food)
+    {
+        Assert.Null(MealJournal.Ounces(food));
+    }
+
+    [Fact]
+    public void Two_sizes_of_one_food_share_a_sizeless_key()
+    {
+        Assert.Equal("7 brew chiller", MealJournal.SizelessKey("7 Brew Chiller, Large 32 oz"));
+        Assert.Equal("7 brew chiller", MealJournal.SizelessKey("7 brew chiller 16oz"));
+        Assert.Equal("7 brew chiller", MealJournal.SizelessKey("7 Brew chiller, small kids medium regular tall grande venti extra xl kid 12 oz"));
+        Assert.NotEqual(MealJournal.SizelessKey("chiller 16 oz"), MealJournal.SizelessKey("mocha 32 oz"));
+    }
+
+    [Fact]
+    public void A_bigger_size_estimated_below_a_smaller_one_conflicts_and_so_does_the_reverse()
+    {
+        var small = E(Thursday, 450, estimated: true, food: "7 Brew chiller, 16 oz");
+        var big = E(Thursday, 900, estimated: true, food: "7 Brew chiller, 32 oz");
+
+        Assert.Same(small, MealJournal.SizeConflict(D("7 brew chiller 32 oz", 400), [small]));
+        Assert.Same(big, MealJournal.SizeConflict(D("7 Brew chiller, 16 oz", 950), [big]));
+    }
+
+    [Fact]
+    public void A_size_priced_in_order_or_equal_does_not_conflict()
+    {
+        var small = E(Thursday, 450, estimated: true, food: "7 Brew chiller, 16 oz");
+        var big = E(Thursday, 900, estimated: true, food: "7 Brew chiller, 32 oz");
+
+        Assert.Null(MealJournal.SizeConflict(D("7 Brew chiller, 32 oz", 900), [small]));
+        Assert.Null(MealJournal.SizeConflict(D("7 Brew chiller, 32 oz", 450), [small]));  // equal is allowed
+        Assert.Null(MealJournal.SizeConflict(D("7 Brew chiller, 16 oz", 450), [big]));
+        Assert.Null(MealJournal.SizeConflict(D("7 Brew chiller, 16 oz", 900), [big]));    // equal is allowed
+        Assert.Null(MealJournal.SizeConflict(D("7 Brew chiller, 16 oz", 300), [small]));  // the same size is not compared
+    }
+
+    [Fact]
+    public void Only_an_estimate_with_a_stated_size_is_checked_and_only_against_the_same_food()
+    {
+        var small = E(Thursday, 450, food: "7 Brew chiller, 16 oz");
+        var blank = E(Thursday, null, food: "7 Brew chiller, 8 oz");
+
+        Assert.Null(MealJournal.SizeConflict(D("7 Brew chiller, 32 oz", 400, estimated: false), [small])); // theirs
+        Assert.Null(MealJournal.SizeConflict(D("7 Brew chiller, 32 oz", null), [small]));                // no number
+        Assert.Null(MealJournal.SizeConflict(D("7 Brew chiller, large", 400), [small]));                 // no ounces
+        Assert.Null(MealJournal.SizeConflict(D("7 Brew mocha, 32 oz", 400), [small]));                   // another food
+        Assert.Null(MealJournal.SizeConflict(D("7 Brew chiller, 4 oz", 100), [blank]));                  // nothing to compare
+        Assert.Null(MealJournal.SizeConflict(D("7 Brew chiller, 32 oz", 400), [E(Thursday, 450, food: "7 Brew chiller")]));
+    }
+
+    [Fact]
+    public void The_latest_conflicting_entry_is_the_one_named()
+    {
+        var older = E(Thursday, 450, food: "chiller, 16 oz");
+        var newer = E(Thursday, 500, food: "chiller, 16 oz");
+
+        Assert.Same(newer, MealJournal.SizeConflict(D("chiller, 32 oz", 400), [older, newer]));
+    }
+
+    [Fact]
+    public void A_size_conflict_names_both_numbers_and_which_way_it_is_wrong()
+    {
+        var small = E(Thursday, 450, food: "chiller, 16 oz");
+        var big = E(Thursday, 900, food: "chiller, 32 oz");
+
+        Assert.Equal(
+            "Not logged: 400 calories for chiller, 32 oz is less than the 450 already logged for chiller, 16 oz — a bigger size can't have fewer calories. Re-estimate it for its size and call log_meal again.",
+            MealJournal.SizeConflictProblem(D("chiller, 32 oz", 400), small));
+        Assert.Equal(
+            "Not logged: 1,000 calories for chiller, 16 oz is more than the 900 already logged for chiller, 32 oz — a smaller size can't have more calories. Re-estimate it for its size and call log_meal again.",
+            MealJournal.SizeConflictProblem(D("chiller, 16 oz", 1000), big));
+    }
+
     [Fact]
     public void A_food_with_nothing_remembered_is_written_as_it_came()
     {

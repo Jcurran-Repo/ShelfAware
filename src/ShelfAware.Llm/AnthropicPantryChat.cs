@@ -41,7 +41,7 @@ public class AnthropicPantryChat : IPantryChat
     /// <summary>What <c>log_meal</c> hands back when the user gave no portion — not a failure, a question for
     /// them, so nothing is written and the model asks.</summary>
     internal const string AskPortion =
-        "Not logged yet: they didn't say how much. Ask them the portion or size (e.g. small, medium or large; how many; a cup or a bowl), then call log_meal again with it in 'portion'. Don't guess one.";
+        "This food was NOT logged: they didn't say how much. Your reply must ask them its portion or size (e.g. small, medium or large; how many; a cup or a bowl) — saying what else this turn did log, if anything. When they answer, call log_meal for this food only, with the amount in 'portion' (for a saved recipe, in 'servings'). Don't guess one.";
     private static readonly string SystemPrompt = ReadEmbedded("Prompts.pantry-chat-system.txt");
 
     private readonly IChatClient _chat;
@@ -92,12 +92,15 @@ public class AnthropicPantryChat : IPantryChat
                 + string.Join(", ", knownTags);
         // The clock, for the journal only: "I just had a sandwich" with no meal named is lunch at 12:40
         // and a snack at 15:30, and a date alone can't tell those apart.
+        // The person's remembered foods, read once per turn: the prompt lists them and log_meal's portion
+        // question asks the same list, rather than re-reading it per food.
+        IReadOnlyList<RememberedCalories> remembered = [];
         if (_journal is not null)
         {
             system += $"\n\nThe time now is {DateTime.Now.ToString("h:mm tt", CultureInfo.InvariantCulture)}.";
             // The person's own numbers, by the names their journal already uses: the journal applies a
             // remembered number itself, but only to the same food, so the model has to be able to name it.
-            var remembered = await _journal.RememberedAsync(cancellationToken);
+            remembered = await _journal.RememberedAsync(cancellationToken);
             if (remembered.Count > 0)
                 system += "\n\nFoods the user has given their own calorie number for (most recent first). When they eat one of these again, pass its food name exactly as written here — the journal then uses their number:\n"
                     + string.Join("\n", remembered.Take(MaxRememberedInPrompt)
@@ -207,7 +210,7 @@ public class AnthropicPantryChat : IPantryChat
                     // is invisible by design to the household; the log line is the only signal an operator
                     // gets that a tool is limping, which is the same argument the provider catches make.
                     bool isError;
-                    (text, isError) = await ExecuteToolAsync(call, products, actions, nav, wrote, cookAlong, cancellationToken);
+                    (text, isError) = await ExecuteToolAsync(call, products, actions, nav, wrote, cookAlong, remembered, cancellationToken);
                     if (isError) _logger.LogWarning("Chat tool {Tool} reported a failure to the model: {Text}", call.Name, text);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -315,7 +318,7 @@ public class AnthropicPantryChat : IPantryChat
 
     private async Task<(string text, bool isError)> ExecuteToolAsync(
         FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, NavigationTarget nav,
-        TurnWrites wrote, CookAlongState? cookAlong, CancellationToken ct)
+        TurnWrites wrote, CookAlongState? cookAlong, IReadOnlyList<RememberedCalories> remembered, CancellationToken ct)
     {
         string? Str(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsString(v) : null;
         decimal? Dec(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsDecimal(v) : null;
@@ -779,22 +782,19 @@ public class AnthropicPantryChat : IPantryChat
                 // person said themselves outranks both — it is theirs, and the recipe's is an estimate.
                 int? calories = Int("calories");
                 var stated = calories is not null && Bool("calories_stated") == true;
-
-                // No portion, no guess: a size the model assumes is how a 32 oz drink got priced as a
-                // 16 oz one. Asked instead — unless the person's number already settles it: they said the
-                // calories, they named servings of a saved recipe, or they've priced this very food before.
-                if (string.IsNullOrWhiteSpace(Str("portion")) && Dec("servings") is null && !stated
-                    && MealJournal.Find(food, await _journal.RememberedAsync(ct)) is null)
-                    return (AskPortion, false);
+                var servingsSaid = Dec("servings");
+                var portion = Str("portion");
                 var note = "";
+                var recipePriced = false;
                 if (!stated && Str("recipe_name") is { Length: > 0 } recipeName)
                 {
                     var recipe = ResolveRecipe(recipeName, await _store.GetRecipesAsync(ct));
                     if (recipe?.CaloriesPerServing is { } perServing)
                     {
-                        var servings = Dec("servings") ?? 1m;
+                        var servings = servingsSaid ?? 1m;
                         if (servings <= 0 || servings > 20) return ("servings must be more than 0 and at most 20.", true);
                         calories = (int)Math.Round(perServing * servings, MidpointRounding.AwayFromZero);
+                        recipePriced = true;
                         note = $" (from the saved {recipe.Name} recipe)";
                         // The servings are part of WHICH food this is: a remembered number for one bowl must
                         // not be recalled over three, so a count other than one goes into the name it is
@@ -803,6 +803,17 @@ public class AnthropicPantryChat : IPantryChat
                             food = $"{recipe.Name}, {servings.ToString("0.##", CultureInfo.InvariantCulture)} servings";
                     }
                 }
+
+                // No portion, no guess: a size the model assumes is how a 32 oz drink got priced as a 16 oz
+                // one. Asked instead — unless the amount is already settled: they said the calories, they said
+                // how many servings of a saved recipe that priced it, or they've given their own number for
+                // this very food. A recipe's amount is its servings; anything else's is the portion they said.
+                var amountSaid = recipePriced ? servingsSaid is not null : !string.IsNullOrWhiteSpace(portion);
+                if (!amountSaid && !stated && MealJournal.Find(food, remembered) is null)
+                    return (AskPortion, false);
+                // The size is part of which food it is, so it is in the name the journal compares and
+                // remembers by — "chiller" with portion "small" must not recall the large's number.
+                if (!recipePriced) food = MealJournal.WithPortion(food, portion);
 
                 var write = await _journal.LogAsync(new JournalDraft(food, slot, eatenOn, calories, CaloriesEstimated: !stated), ct);
                 if (write.Entry is not { } entry) return (write.Problem!, true);
@@ -1029,8 +1040,8 @@ public class AnthropicPantryChat : IPantryChat
                 "Record ONE food the user says they ate in their personal meal journal. Call once per distinct food ('two eggs and toast for breakfast' = two calls). Eating is NOT an inventory statement: never record_signal, set_quantity or add_purchase because someone ate something.",
                 """
                 {
-                  "food": { "type": "string", "description": "What was eaten, with the portion as they said it (e.g. '2 scrambled eggs', 'turkey sandwich'). For a drink or a chain's menu item, include the size you priced (e.g. '7 Brew Blondie, medium 24 oz') so they can see it. If it is one of the foods listed with their own calorie number, use that name exactly." },
-                  "portion": { "type": "string", "description": "How much, in the user's own words ('large', '2', 'a bowl', '16 oz'). ONLY what they said — never one you assume. Omit if they gave none; the tool will tell you to ask." },
+                  "food": { "type": "string", "description": "What was eaten, with the portion as they said it (e.g. '2 scrambled eggs', 'turkey sandwich'). For a drink or a chain's menu item, include the size they said (e.g. '7 Brew Blondie, medium 24 oz'). If it is one of the foods listed with their own calorie number, use that name exactly." },
+                  "portion": { "type": "string", "description": "How much, in the user's own words ('large', '2', 'a bowl', '32 oz'). ONLY what they said — never one you assume. Omit if they gave none; the tool will tell you to ask. For a saved recipe, use servings instead." },
                   "meal": { "type": "string", "enum": ["Breakfast","Lunch","Dinner","Snack"], "description": "The meal they name; if they don't name one, infer it from their words or the time now." },
                   "calories": { "type": "integer", "description": "Calories for the portion eaten: the number they stated, or else your best estimate for the portion they said (for a named chain, that chain's own size and recipe, not a generic cup). Omit only if you genuinely cannot estimate." },
                   "calories_stated": { "type": "boolean", "description": "true ONLY when the user said the calorie number themselves. Default false (an estimate)." },

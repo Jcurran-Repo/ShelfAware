@@ -62,12 +62,21 @@ logging into one household see two journals. That is a structural guard, not a W
   removing every entry with a number forgets it. The page's undo uses `RestoreAsync`, which neither
   recalls nor re-stamps, so a removed entry comes back exactly as it was and can't displace a newer number.
 - **No portion, no guess** (2026-10-23, Jordan: "if i forget to say the size of a portion it should ask
-  me"). `log_meal` takes the portion in the person's own words; without one it writes nothing and tells
-  the model to ask (`AnthropicPantryChat.AskPortion`). Excused when the portion is already settled: they
-  said the calories, they named servings of a saved recipe, or the food is one they've given their own
-  number for (`MealJournal.Find`, the same match the recall uses). The prompt says a count is enough for
-  "a sandwich" but not for a drink or anything sold in sizes. The page's add-by-hand form is unaffected —
-  a person typing a food is not being guessed for.
+  me"). `log_meal` takes the amount in the person's own words — `portion`, or for a saved recipe that
+  priced it, `servings` — and without one writes nothing and tells the model to ask
+  (`AnthropicPantryChat.AskPortion`, which also tells it to log only that food once answered). Excused
+  only when the amount is settled: they said the calories, or the food is one they've given their own
+  number for (`MealJournal.Find`, the same match the recall uses). Servings with no recipe that priced
+  them excuse nothing — they'd be ignored and the model's guess written. The portion joins the food's
+  name (`MealJournal.WithPortion`) unless the name already says it, so "a small chiller" can't recall the
+  large's number. The page's add-by-hand form is unaffected.
+- **A bigger size never estimates lower** (same day: 32 oz came back below the 16 oz estimate — the
+  model's own inconsistency; nothing in the app scales calories). `MealJournal.SizeConflict` compares an
+  ESTIMATE's ounces (read off the name, `Ounces`) with every logged size of the same food
+  (`SizelessKey` drops ounces and size words); a bigger cup priced lower than a smaller one, or the
+  reverse, is refused on the write path with both numbers named so the model re-estimates. A number the
+  person gave is never checked. Only names that state ounces are compared — "large" alone carries no
+  size the code can rank.
 - Reginald is given the person's remembered foods (the 40 most recent) in the prompt and told to reuse
   those names exactly, since recall only matches the same food. For a chain's drink or menu item he is
   told to price that chain's own size and put the size he assumed in the food name — the likely cause of
