@@ -33,6 +33,7 @@ public class AnthropicPantryChat : IPantryChat
     /// wired and the declarations that define them cannot drift apart (the <see cref="GoToStep"/> lesson).</summary>
     private const string LogMeal = "log_meal";
     private const string QueryJournal = "query_journal";
+    private const string EditMeal = "edit_meal";
 
     /// <summary>How many of the person's remembered foods the prompt lists — the most recent, which are the
     /// ones they are likeliest to have again; an older one still applies when the model names it exactly.</summary>
@@ -822,8 +823,66 @@ public class AnthropicPantryChat : IPantryChat
                 var kcal = MealJournal.Total([entry]).KcalOrUncounted;
                 // Their own number for this food outranked the estimate and the recipe — say whose it is.
                 if (write.Recalled) note = " (their own number from the last time they logged it)";
-                return ($"Logged {entry.Food} for {MealJournal.SlotName(entry.Slot)} on {entry.EatenOn:yyyy-MM-dd}: {kcal}{note}"
-                    + (entry.CaloriesEstimated ? " — an estimate, which they can correct on the Journal page." : "."), false);
+                return ($"Logged {MealJournal.EntryLine(entry)} for {MealJournal.SlotName(entry.Slot)} on {entry.EatenOn:yyyy-MM-dd}{note}"
+                    + (entry.CaloriesEstimated ? " — an estimate, which they can correct by telling you or on the Journal page." : "."), false);
+            }
+
+            case EditMeal:
+            {
+                if (_journal is null) return ("The meal journal isn't set up.", true);
+                if (Int("entry_id") is not { } id) return ("Pass entry_id — the number in [entry N] from the journal listing.", true);
+                var found = await _journal.GetEntryAsync(id, ct);
+                if (found.Problem is { } unreadable) return (unreadable, true);
+                if (found.Entries is not [var before]) return ($"There is no entry {id} in their journal — it may have been removed.", true);
+
+                // A new size goes on the food's name — so the name it had must come too, without its old size,
+                // or "chiller, medium" plus "large" would be stored as "chiller, medium, large".
+                var named = Str("food")?.Trim();
+                var portion = Str("portion");
+                if (string.IsNullOrEmpty(named) && !string.IsNullOrWhiteSpace(portion))
+                    return ("Not changed: with a new portion, pass food too — the food's name without its old size — so the old size doesn't stay in the name.", true);
+                // Only what they said changes; everything else stays as the entry has it.
+                var food = MealJournal.WithPortion(string.IsNullOrEmpty(named) ? before.Food : named, portion);
+                var slot = before.Slot;
+                if (Str("meal") is { Length: > 0 } rawMeal &&
+                    (!Enum.TryParse(rawMeal, ignoreCase: true, out slot) || !Enum.IsDefined(slot)))
+                    return ("meal must be one of Breakfast, Lunch, Dinner, Snack.", true);
+                var eatenOn = before.EatenOn;
+                if (Str("date") is { Length: > 0 } rawDate &&
+                    !DateOnly.TryParseExact(rawDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out eatenOn))
+                    return ($"Couldn't read \"{rawDate}\" as a date — pass it as YYYY-MM-DD.", true);
+
+                // The number. One they said is theirs. The same food keeps its number and whose it is — an
+                // echo of the number already there is not a new estimate, and must not demote their own. A
+                // different food (a new size, say) is priced as log_meal prices it: their remembered number
+                // for it wins over the estimate (MealJournal.Recall, THE override rule), and with neither, the
+                // old food's calories on the new food's name would be a number nobody gave — refused.
+                int? calories = Int("calories");
+                var stated = calories is not null && Bool("calories_stated") == true;
+                var sameFood = MealJournal.FoodKey(food) == MealJournal.FoodKey(before.Food);
+                JournalDraft draft;
+                var recalled = false;
+                if (sameFood && (calories is null || calories == before.Calories))
+                    draft = new(food, slot, eatenOn, before.Calories, before.CaloriesEstimated && !stated);
+                else if (sameFood || stated)
+                    draft = new(food, slot, eatenOn, calories, !stated);
+                else
+                {
+                    (draft, recalled) = MealJournal.Recall(new JournalDraft(food, slot, eatenOn, calories, CaloriesEstimated: true), remembered);
+                    if (draft.Calories is null)
+                        return ("Not changed: the food is different now, so its calories must be too. Call edit_meal again with calories — your estimate for the new food and size, or theirs with calories_stated=true.", true);
+                }
+
+                if (draft == new JournalDraft(before.Food, before.Slot, before.EatenOn, before.Calories, before.CaloriesEstimated))
+                    return ($"Nothing to change: {MealJournal.EntryLine(before)} already says that.", false);
+
+                var edit = await _journal.UpdateAsync(id, draft, ct);
+                if (edit.Entry is not { } after) return (edit.Problem!, true);
+                wrote.Mark();
+                actions.Add($"journal ✎ {after.Food}");
+                return ($"Updated {MealJournal.EntryLine(before)} to {MealJournal.EntryLine(after)}, {MealJournal.SlotName(after.Slot)} on {after.EatenOn:yyyy-MM-dd}"
+                    + (recalled ? " (their own number from the last time they logged it)" : "")
+                    + (after.CaloriesEstimated ? " — an estimate." : "."), false);
             }
 
             case QueryJournal:
@@ -844,7 +903,7 @@ public class AnthropicPantryChat : IPantryChat
                 // A day is small enough to say what was in it; a week or a month is a number.
                 if (period == JournalPeriod.Day)
                     foreach (var meal in MealJournal.Meals(entries))
-                        answer += $" {meal.Slot}: {string.Join(", ", meal.Items.Select(i => i.Food))} ({meal.Total.KcalOrUncounted}).";
+                        answer += $" {meal.Slot}: {string.Join(", ", meal.Items.Select(MealJournal.EntryLine))} — {meal.Total.KcalOrUncounted}.";
                 return (answer, false);
             }
 
@@ -1061,6 +1120,21 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 """,
                 ["period"]),
+
+            MakeTool(EditMeal,
+                "Correct ONE food already in the user's meal journal — a different size or food, calories, meal or day ('actually it was a large', 'make that 500 calories', 'that was yesterday'). entry_id is the N in [entry N], from the journal on screen or from log_meal's or query_journal's answer. Pass only what changes. Never log_meal again to correct an entry — that would count it twice.",
+                """
+                {
+                  "entry_id": { "type": "integer", "description": "The entry to change: the N in [entry N]." },
+                  "food": { "type": "string", "description": "The food's new description, if it changes." },
+                  "portion": { "type": "string", "description": "A new size or amount in the user's words ('large', '32 oz'), if that is what changes. Pass food with it: the food's name without the old size." },
+                  "calories": { "type": "integer", "description": "The new calories: the number they stated, or your estimate when the food or size changed. Omit to keep the number for an unchanged food." },
+                  "calories_stated": { "type": "boolean", "description": "true ONLY when the user said the calorie number themselves." },
+                  "meal": { "type": "string", "enum": ["Breakfast","Lunch","Dinner","Snack"], "description": "A different meal, if it changes." },
+                  "date": { "type": "string", "description": "A different day it was eaten (YYYY-MM-DD), if it changes." }
+                }
+                """,
+                ["entry_id"]),
         ];
 
         // ⚠️ A tool that cannot do anything is not offered. go_to_step moves the hands-free reader and
@@ -1076,7 +1150,7 @@ public class AnthropicPantryChat : IPantryChat
         // The journal's tools follow the same rule: offered only when a journal is wired to carry them out.
         return tools
             .Where(t => cookAlong is not null || t.Name != GoToStep)
-            .Where(t => journal || t.Name is not (LogMeal or QueryJournal))
+            .Where(t => journal || t.Name is not (LogMeal or QueryJournal or EditMeal))
             .Select(t => ((ToolUnion)t).AsAITool())
             .ToList();
     }

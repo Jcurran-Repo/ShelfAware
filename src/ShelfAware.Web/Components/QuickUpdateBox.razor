@@ -34,7 +34,7 @@
 @if (ShelfAware.Core.Speech.VoiceEar.CanHear(Voice.Ear))
 {
     <div class="voice-divider"><span>or hold to talk</span></div>
-    <PushToTalk OnApplied="OnApplied" />
+    <PushToTalk OnApplied="OnApplied" Conversation="conversation" ScreenContext="@ScreenContext" />
 }
 
 @code {
@@ -48,6 +48,20 @@
 
     /// <summary>Raised after a successful turn (typed or spoken), so the page reloads what it shows.</summary>
     [Parameter] public EventCallback OnApplied { get; set; }
+
+    /// <summary>What the page is showing, for Reginald to resolve "it" and "that day" against — or null.</summary>
+    [Parameter] public string? ScreenContext { get; set; }
+
+    /// <summary>How many recent exchanges (typed and spoken, shared) to replay with each turn, so a follow-up
+    /// like "make it a large" knows what "it" is. 0 keeps none — each line stands alone.</summary>
+    [Parameter] public int RememberTurns { get; set; }
+
+    private RecentTurns? conversation;
+
+    protected override void OnParametersSet()
+    {
+        if (RememberTurns > 0) conversation ??= new RecentTurns(RememberTurns);
+    }
 
     private string chatInput = "";
     private string? chatReply;
@@ -87,11 +101,13 @@
         }
         try
         {
-            var result = await Chat.HandleAsync(chatInput);
+            var said = chatInput;
+            var result = await Chat.HandleAsync(said, conversation?.Turns, ScreenContext);
             chatReply = result.Reply;
             chatError = !result.Success;
             if (result.Success)
             {
+                conversation?.Add(said, result.Reply);
                 chatInput = "";
                 await OnApplied.InvokeAsync(); // reflect what the turn changed in the page's lists
                 // A navigation tool ran ("show me the grocery list", "read me the ribs recipe") —

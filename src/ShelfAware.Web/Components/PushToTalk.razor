@@ -59,6 +59,13 @@
 @code {
     [Parameter] public EventCallback OnApplied { get; set; }
 
+    /// <summary>The recent exchanges this button shares with the box beside it, or null for none — so a spoken
+    /// "make it a large" follows a typed "a chiller", and the other way round.</summary>
+    [Parameter] public RecentTurns? Conversation { get; set; }
+
+    /// <summary>What the page is showing, for Reginald to resolve "it" and "that day" against — or null.</summary>
+    [Parameter] public string? ScreenContext { get; set; }
+
     private enum VoiceState { Idle, Recording, Thinking, Speaking }
     private VoiceState State = VoiceState.Idle;
 
@@ -158,11 +165,14 @@
         _transcript = heard.Text;
         StateHasChanged();
 
-        var result = await Chat.HandleAsync(heard.Text);
+        var result = await Chat.HandleAsync(heard.Text, Conversation?.Turns, ScreenContext);
         _reply = result.Reply;
         _error = !result.Success;
         if (result.Success)
+        {
+            Conversation?.Add(heard.Text, result.Reply);
             await OnApplied.InvokeAsync();
+        }
 
         await SpeakAsync(result.Reply);
         State = VoiceState.Idle;

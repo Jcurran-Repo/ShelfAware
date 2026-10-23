@@ -19,6 +19,15 @@ public interface IMealJournal
     /// see.</summary>
     Task<JournalRead> GetAsync(DateSpan span, CancellationToken cancellationToken = default);
 
+    /// <summary>One of the signed-in person's entries by id — no entries when it isn't theirs or is gone, and a
+    /// <see cref="JournalRead.Problem"/> when nobody is signed in, so "there is no such entry" is never said
+    /// about a journal no one could see.</summary>
+    Task<JournalRead> GetEntryAsync(int id, CancellationToken cancellationToken = default);
+
+    /// <summary>Correct one entry — the same write the Journal page's edit makes, rule and all, the size check
+    /// (<see cref="MealJournal.SizeConflict"/>) included.</summary>
+    Task<JournalWrite> UpdateAsync(int id, JournalDraft draft, CancellationToken cancellationToken = default);
+
     /// <summary>The foods the signed-in person has given their own calorie number for
     /// (<see cref="MealJournal.Remembered"/>) — empty when nobody is signed in. <see cref="LogAsync"/> applies
     /// them itself; this is so Reginald can name a food the way the person's journal already does.</summary>

@@ -30,7 +30,7 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
         var (written, recalled) = MealJournal.Recall(draft, await RememberedAsync(db, cancellationToken));
         // An estimate that prices a bigger size below a smaller one already logged (or the reverse) is wrong
         // on its face — refused here, on the write path, so no surface can store one.
-        if (MealJournal.SizeConflict(written, await SizedAsync(db, cancellationToken)) is { } other)
+        if (MealJournal.SizeConflict(written, await SizedAsync(db, except: null, cancellationToken)) is { } other)
             return JournalWrite.Refused(MealJournal.SizeConflictProblem(written, other));
         // A recalled number was given before, not now: it carries no stamp, so it can never outrank the
         // correction it came from, nor rename the food that correction is remembered by.
@@ -67,10 +67,14 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
 
     /// <summary>The entries a size can be compared against — ones with a number whose name may state ounces.
     /// The LIKE only narrows the read; <see cref="MealJournal.SizeConflict"/> parses the sizes itself.</summary>
-    private static async Task<List<JournalEntry>> SizedAsync(ShelfAwareDbContext db, CancellationToken cancellationToken) =>
+    /// <param name="except">The entry being corrected, left out — its old size is what the edit replaces, not
+    /// a second cup to compare with.</param>
+    private static async Task<List<JournalEntry>> SizedAsync(ShelfAwareDbContext db, int? except,
+        CancellationToken cancellationToken) =>
         await db.JournalEntries
             .AsNoTracking()
-            .Where(e => e.Calories != null && (EF.Functions.Like(e.Food, "%oz%") || EF.Functions.Like(e.Food, "%ounce%")))
+            .Where(e => e.Id != except
+                && e.Calories != null && (EF.Functions.Like(e.Food, "%oz%") || EF.Functions.Like(e.Food, "%ounce%")))
             .ToListAsync(cancellationToken);
 
     /// <summary>The one insert. The rule is asked here, on what is actually written — after a recall has
@@ -109,8 +113,18 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
             .ToListAsync(cancellationToken));
     }
 
+    public async Task<JournalRead> GetEntryAsync(int id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        if (db.MemberId is null) return JournalRead.Refused(NobodySignedIn);
+        // The member filter applies to this read like every other: another person's id finds nothing.
+        return JournalRead.Of(await db.JournalEntries.AsNoTracking().Where(e => e.Id == id).ToListAsync(cancellationToken));
+    }
+
     /// <summary>Correct an entry. Refused, not clamped, when the correction breaks the rule — this is a
-    /// number someone typed on purpose. Gone (deleted elsewhere, or not this person's) is a refusal too.</summary>
+    /// number someone typed on purpose. Gone (deleted elsewhere, or not this person's) is a refusal too, and so
+    /// is an estimate that prices a size against the journal's other sizes impossibly — the check
+    /// <see cref="LogAsync"/> makes, because Reginald's <c>edit_meal</c> writes estimates through here.</summary>
     public async Task<JournalWrite> UpdateAsync(int id, JournalDraft draft, CancellationToken cancellationToken = default)
     {
         if (MealJournal.Problem(draft.Food, draft.Calories, draft.EatenOn, Today) is { } problem)
@@ -119,6 +133,8 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var entry = await db.JournalEntries.FirstOrDefaultAsync(e => e.Id == id, cancellationToken);
         if (entry is null) return JournalWrite.Refused("That entry is no longer in your journal.");
+        if (MealJournal.SizeConflict(draft, await SizedAsync(db, except: id, cancellationToken)) is { } other)
+            return JournalWrite.Refused(MealJournal.SizeConflictProblem(draft, other));
 
         // Asked before the fields move: whether this edit gives the food a number is a comparison with what
         // the entry said until now.

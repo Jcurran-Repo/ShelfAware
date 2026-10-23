@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Journal;
 using ShelfAware.Web.Components.Pages;
@@ -285,6 +286,104 @@ public class MealJournalPageTests : PageTestContext
         cut.Find("section.quick-update input").Input("a turkey sandwich for lunch");
         cut.Find("section.quick-update form").Submit();
         cut.WaitForAssertion(() => Assert.Equal(["a turkey sandwich for lunch"], Chat.Asked));
+    }
+
+    [Fact]
+    public void Reginald_is_told_the_day_on_screen_and_its_entries_and_so_is_the_roaming_agent()
+    {
+        Seed("7 Brew chiller, 16 oz", 450, estimated: true, slot: MealSlot.Snack);
+        var earlier = Today.AddDays(-1);
+        Seed("Leftover pizza", 600, slot: MealSlot.Dinner, on: earlier);
+        var cut = RenderPage();
+
+        cut.Find("section.quick-update input").Input("make it a 32 oz");
+        cut.Find("section.quick-update form").Submit();
+        cut.WaitForAssertion(() => Assert.Single(Chat.Asked));
+        var id = Stored().Single(e => e.EatenOn == Today).Id;
+        Assert.Equal(MealJournal.ScreenContext(Today, Today, Stored().Where(e => e.EatenOn == Today)), Chat.LastScreenContext);
+        Assert.Contains($"[entry {id}] 7 Brew chiller, 16 oz", Chat.LastScreenContext);
+        Assert.Equal(Chat.LastScreenContext, Coordinator.ScreenContext);
+
+        // Opening another day moves the default with it — for the box and the roaming agent alike.
+        DayCell(cut, earlier).Click();
+        Assert.Contains($"pass date {earlier:yyyy-MM-dd} to log_meal", Coordinator.ScreenContext);
+        Assert.Contains("Leftover pizza", Coordinator.ScreenContext);
+
+        cut.Instance.Dispose();
+        Assert.Null(Coordinator.ScreenContext); // the next page isn't told about this one
+    }
+
+    [Fact]
+    public void A_load_that_finishes_after_the_page_is_gone_does_not_tell_the_next_page_about_this_one()
+    {
+        var cut = RenderPage();
+        var held = new TaskCompletionSource<ChatResult>();
+        Chat.Hold = held;
+        cut.Find("section.quick-update input").Input("a banana");
+        cut.Find("section.quick-update form").Submit();
+        cut.WaitForAssertion(() => Assert.Single(Chat.Asked));
+
+        cut.Instance.Dispose(); // navigated away while Reginald was still answering
+        Seed("Banana", 105, estimated: true, slot: MealSlot.Snack);
+        held.SetResult(new() { Success = true, Reply = "Logged it." });
+
+        // The turn's reload ran to the end (the banana is on the page) — and still published nothing.
+        cut.WaitForAssertion(() => Assert.Contains("Banana", cut.Find(".journal-day").TextContent));
+        Assert.Null(Coordinator.ScreenContext);
+    }
+
+    [Fact]
+    public void With_nobody_signed_in_reginald_is_told_nothing_about_the_day()
+    {
+        // "Nothing is logged on that day yet" would be a claim about a journal nobody could read.
+        Db.MemberId = null;
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => Assert.Contains("needs someone signed in", cut.Markup));
+        Assert.Null(Coordinator.ScreenContext);
+    }
+
+    [Fact]
+    public void The_last_two_exchanges_ride_along_so_it_means_what_was_just_said()
+    {
+        var cut = RenderPage();
+        string[] said = ["a chiller", "large", "make it 900"];
+        string[] replies = ["Which size?", "Logged [entry 1] chiller, large.", "Updated [entry 1]."];
+
+        for (var i = 0; i < said.Length; i++)
+        {
+            Chat.Next = new() { Success = true, Reply = replies[i] };
+            cut.Find("section.quick-update input").Input(said[i]);
+            cut.Find("section.quick-update form").Submit();
+            var asked = i + 1;
+            cut.WaitForAssertion(() => Assert.Equal(asked, Chat.Asked.Count));
+            if (i == 0) Assert.Empty(Chat.LastHistory!);
+        }
+
+        // The third turn carried the first two; a fourth would carry only the last two.
+        Assert.Equal([new ChatTurn("a chiller", "Which size?"), new ChatTurn("large", "Logged [entry 1] chiller, large.")], Chat.LastHistory);
+        Chat.Next = new() { Success = true, Reply = "Okay." };
+        cut.Find("section.quick-update input").Input("thanks");
+        cut.Find("section.quick-update form").Submit();
+        cut.WaitForAssertion(() => Assert.Equal(4, Chat.Asked.Count));
+        Assert.Equal([new ChatTurn("large", "Logged [entry 1] chiller, large."), new ChatTurn("make it 900", "Updated [entry 1].")], Chat.LastHistory);
+    }
+
+    [Fact]
+    public void A_failed_turn_is_not_replayed_as_if_it_had_happened()
+    {
+        var cut = RenderPage();
+        Chat.Next = new() { Success = false, Reply = "Couldn't reach the assistant." };
+        cut.Find("section.quick-update input").Input("a chiller");
+        cut.Find("section.quick-update form").Submit();
+        cut.WaitForAssertion(() => Assert.Single(Chat.Asked));
+
+        Chat.Next = new() { Success = true, Reply = "Which size?" };
+        cut.Find("section.quick-update form").Submit(); // the text stays in the box after a failure
+        cut.WaitForAssertion(() => Assert.Equal(2, Chat.Asked.Count));
+
+        Assert.Empty(Chat.LastHistory!);
     }
 
     [Fact]
