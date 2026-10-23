@@ -162,8 +162,7 @@
 
     private bool AlreadyOn(string route)
     {
-        var current = "/" + Nav.ToBaseRelativePath(Nav.Uri).Split('?')[0];
-        return string.Equals(Normalize(current), Normalize(route), StringComparison.OrdinalIgnoreCase);
+        return string.Equals(Normalize(SiteNav.PathOf(Nav, Nav.Uri)), Normalize(route), StringComparison.OrdinalIgnoreCase);
 
         // "/products/" and "/products" are the same page; "" and "/" are the dashboard.
         static string Normalize(string path) => path.TrimEnd('/') is { Length: > 0 } trimmed ? trimmed : "/";

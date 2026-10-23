@@ -46,7 +46,8 @@ public static class SiteNav
               || path.StartsWith(page.Href + "/", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The app path of an absolute URI: "/" plus the base-relative part, with any query
-    /// string or fragment dropped, since neither changes which page the visitor is on.</summary>
+    /// string or fragment dropped, since neither changes which page the visitor is on. The one answer
+    /// to "what page is this" for the rail, the tabs, the guided tour and the footer's bug link.</summary>
     public static string PathOf(NavigationManager nav, string absoluteUri)
     {
         var relative = nav.ToBaseRelativePath(absoluteUri);

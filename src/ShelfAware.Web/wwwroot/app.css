@@ -298,6 +298,12 @@ body {
     margin-top: 0.4rem;
 }
 
+/* A one-page section after a group (Settings after Insights) gets the same gap, so it doesn't read
+   as the group's last page. */
+.nav-group + a {
+    margin-top: 0.4rem;
+}
+
 .nav-group-label {
     padding: 0 0.6rem 0.15rem;
     color: var(--ink-soft);
