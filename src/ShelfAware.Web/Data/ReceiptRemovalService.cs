@@ -57,6 +57,19 @@ public sealed class ReceiptRemovalService(
         return outcome;
     }
 
+    /// <summary>Whether <paramref name="product"/>'s count was attested after <paramref name="receipt"/>'s
+    /// confirm, so it already reflects whatever the receipt put on the shelf — THE one reading, asked by
+    /// the removal below (don't take stock back out of a newer count) and by tracking a line late
+    /// (<see cref="ReceiptLineProductService"/>: don't add stock into one). The two must agree, or a late
+    /// track adds what its removal then refuses to take back. A null <see cref="Receipt.ConfirmedAt"/> is a
+    /// pre-v4.1 confirm with no moment to compare: only a product the receipt introduced has a decidable
+    /// order then, since it did not exist before its own confirm.</summary>
+    public static bool CountPostdatesConfirm(Product product, Receipt receipt) =>
+        product.QuantityCountedAt is { } counted
+        && (receipt.ConfirmedAt is { } confirmedAt
+            ? counted > confirmedAt
+            : product.CreatedByReceiptId == receipt.Id);
+
     /// <summary>The DB half of a removal, STAGED on the caller's context — no SaveChanges, and no file
     /// deletion. Extracted so the receipt-confirm UNDO can reuse the exact same reversal: its handler
     /// stages this, <c>ActivityLogService.PeekAsync</c> discards it (⚠️ which is why the image-folder
@@ -107,10 +120,7 @@ public sealed class ReceiptRemovalService(
             foreach (var purchase in linked)
             {
                 if (purchase.Product is not { } product) continue;
-                if (product.QuantityCountedAt is { } counted
-                    && (receipt.ConfirmedAt is { } confirmedAt
-                        ? counted > confirmedAt
-                        : product.CreatedByReceiptId == receipt.Id)) continue;
+                if (CountPostdatesConfirm(product, receipt)) continue;
                 StockLedger.Remove(product, purchase.Quantity);
             }
 

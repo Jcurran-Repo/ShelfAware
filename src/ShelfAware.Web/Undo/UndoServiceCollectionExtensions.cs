@@ -42,5 +42,6 @@ public static class UndoServiceCollectionExtensions
         services.AddScoped<IUndoHandler, ExcludedFoodChangedHandler>(); // soft action, reversible
         services.AddScoped<IUndoHandler, RecipeSavedHandler>();      // soft action, reversible (warns if built on)
         services.AddScoped<IUndoHandler, RecipeAdaptedHandler>();    // soft action, reversible (warns if built on)
+        services.AddScoped<IUndoHandler, ReceiptLineTrackedHandler>();
     }
 }

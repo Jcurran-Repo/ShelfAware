@@ -1534,6 +1534,10 @@ button.mic-speaking {
 /* A cluster card's member list: a compact inline run of product links, not a bulleted shelf. */
 .nudge-members { list-style: none; margin: 0 0 0.6rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; }
 .nudge-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+/* "A new name…" opens this inline field under the card's buttons: label, input and Merge on one wrapping row. */
+.nudge-rename { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem; margin-top: 0.6rem; }
+.nudge-rename label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; color: var(--muted); flex: 1 1 14rem; min-width: 0; }
+.nudge-rename input { width: 100%; }
 .nudge-done { display: flex; align-items: center; gap: 0.75rem; justify-content: space-between; }
 
 /* The "you told Eggs these are separate" list on a product's detail page (ProductDetail). */
@@ -1576,6 +1580,13 @@ button.mic-speaking {
 
 .receipt-card table {
     margin-top: 0.75rem;
+}
+
+/* The per-line "Create new product" offer for a confirmed line that points at no product — a quiet
+   inline action beside the name, so the table still reads as a ledger first. */
+.receipt-line-track {
+    font-size: 0.9em;
+    white-space: nowrap;
 }
 
 /* The money figures printed on the receipt (subtotal/tax/savings/total) — a compact right-aligned
