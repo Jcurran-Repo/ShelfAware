@@ -1051,15 +1051,15 @@
 
     // Curated defaults, but the fields are editable (datalist) so a stale list never boxes you in.
     // The first entry is what a blank field fills with (LoadProviderFields), so it IS the app's default
-    // model rather than a copy of it.
-    private static readonly string[] AnthropicModels = [LlmOptions.DefaultModel, "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "claude-opus-5-5"];
+    // model rather than a copy of it. Anthropic's list is AnthropicModels.Offered, beside the thinking rule
+    // that decides what may go on it.
     private static readonly string[] OpenAiModels = ["gpt-4o-mini", "gpt-4o"];
     private static readonly string[] LocalModels = ["llama3.1", "qwen2.5", "mistral", "phi3"];
-    private static string[] ModelsFor(string p) => p switch
+    private static IReadOnlyList<string> ModelsFor(string p) => p switch
     {
         _ when string.Equals(p, "OpenAI", StringComparison.OrdinalIgnoreCase) => OpenAiModels,
         _ when string.Equals(p, "OpenAICompatible", StringComparison.OrdinalIgnoreCase) => LocalModels,
-        _ => AnthropicModels,
+        _ => AnthropicModels.Offered,
     };
     private bool IsLocal => string.Equals(provider, "OpenAICompatible", StringComparison.OrdinalIgnoreCase);
     private string ProviderLabel => provider switch

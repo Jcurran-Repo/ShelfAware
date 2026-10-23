@@ -1,6 +1,5 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Tagging;
 using ShelfAware.Core.Billing;
 
@@ -14,13 +13,13 @@ namespace ShelfAware.Llm;
 public class AnthropicTagAdvisor : ITagAdvisor
 {
     private readonly IChatClient _chat;
-    private readonly LlmOptions _options;
+    private readonly IAiModelChoice _models;
     private readonly ILogger<AnthropicTagAdvisor> _logger;
 
-    public AnthropicTagAdvisor(IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicTagAdvisor> logger)
+    public AnthropicTagAdvisor(IChatClient chat, IAiModelChoice models, ILogger<AnthropicTagAdvisor> logger)
     {
         _chat = chat;
-        _options = options.Value;
+        _models = models;
         _logger = logger;
     }
 
@@ -57,7 +56,7 @@ public class AnthropicTagAdvisor : ITagAdvisor
                 "e.g. \"Soda\" and \"Soft Drink\", \"Cleaner\" and \"Detergent\"), reply with that existing " +
                 "tag EXACTLY as written above and nothing else. If it is genuinely different, reply with only: NONE";
 
-            var options = new ChatOptions { ModelId = _options.ExtractionModel, MaxOutputTokens = 32 };
+            var options = new ChatOptions { ModelId = _models.ExtractionModel, MaxOutputTokens = 32 };
             var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
             var reply = response.Text.Trim();

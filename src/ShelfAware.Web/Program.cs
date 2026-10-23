@@ -449,6 +449,9 @@ if (paymentsEnabled)
 // friendly "add a key" error only surfaces when someone actually makes a call.
 builder.Services.AddSingleton<IChatClientFactory, ChatClientFactory>();
 builder.Services.AddScoped<CircuitAiSettings>();
+// The model every AI service names on its calls is the circuit's — the visitor's own pick on a BYOK box —
+// not the server's LlmOptions. Same instance as above, so the two can never disagree.
+builder.Services.AddScoped<IAiModelChoice>(sp => sp.GetRequiredService<CircuitAiSettings>());
 // The chain every AI service sees: MeteredChatClient (daily per-household quotas, managed mode only)
 // over ByokChatClient (builds the real provider client from the circuit's settings at call time).
 builder.Services.AddScoped<ByokChatClient>();

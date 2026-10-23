@@ -1,6 +1,5 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Census;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Extraction;
@@ -47,10 +46,10 @@ public class AiDeliveryTests
     }
 
     private static AnthropicRecipeImporter Importer(Microsoft.Extensions.AI.IChatClient c) =>
-        new(c, Options.Create(new LlmOptions()), NullLogger<AnthropicRecipeImporter>.Instance);
+        new(c, new LlmOptions(), NullLogger<AnthropicRecipeImporter>.Instance);
 
     private static AnthropicRecipeAdvisor RecipeAdvisor(Microsoft.Extensions.AI.IChatClient c) =>
-        new(c, Options.Create(new LlmOptions()), NullLogger<AnthropicRecipeAdvisor>.Instance);
+        new(c, new LlmOptions(), NullLogger<AnthropicRecipeAdvisor>.Instance);
 
     // ---- the answer that says "nothing here" is still an answer -----------------------------------
 
@@ -184,7 +183,7 @@ public class AiDeliveryTests
         // first version of this change settled after the parse and left every NONE refunded while its own
         // comment said the opposite.
         var (charging, advisor) = Wire(
-            c => new AnthropicRecipeTagAdvisor(c, Options.Create(new LlmOptions()),
+            c => new AnthropicRecipeTagAdvisor(c, new LlmOptions(),
                 NullLogger<AnthropicRecipeTagAdvisor>.Instance),
             "NONE");
 
@@ -197,7 +196,7 @@ public class AiDeliveryTests
     public async Task No_synonym_among_the_existing_tags_is_an_answer()
     {
         var (charging, advisor) = Wire(
-            c => new AnthropicTagAdvisor(c, Options.Create(new LlmOptions()),
+            c => new AnthropicTagAdvisor(c, new LlmOptions(),
                 NullLogger<AnthropicTagAdvisor>.Instance),
             "NONE");
 
@@ -210,7 +209,7 @@ public class AiDeliveryTests
     public async Task Nothing_substitutes_for_this_product_is_an_answer()
     {
         var (charging, advisor) = Wire(
-            c => new AnthropicProductSubstituteAdvisor(c, Options.Create(new LlmOptions()),
+            c => new AnthropicProductSubstituteAdvisor(c, new LlmOptions(),
                 NullLogger<AnthropicProductSubstituteAdvisor>.Instance),
             "NONE");
 
@@ -223,7 +222,7 @@ public class AiDeliveryTests
     public async Task No_alternative_to_this_ingredient_is_an_answer()
     {
         var (charging, advisor) = Wire(
-            c => new AnthropicIngredientAlternativesAdvisor(c, Options.Create(new LlmOptions()),
+            c => new AnthropicIngredientAlternativesAdvisor(c, new LlmOptions(),
                 NullLogger<AnthropicIngredientAlternativesAdvisor>.Instance),
             "NONE");
 
@@ -236,7 +235,7 @@ public class AiDeliveryTests
     public async Task A_receipt_that_read_clean_with_no_lines_on_it_still_read()
     {
         var (charging, extractor) = Wire(
-            c => new AnthropicReceiptExtractor(c, Options.Create(new LlmOptions()),
+            c => new AnthropicReceiptExtractor(c, new LlmOptions(),
                 NullLogger<AnthropicReceiptExtractor>.Instance),
             """{ "merchant": "Walmart", "purchase_date": "2026-06-15", "lines": [] }""");
 
@@ -252,7 +251,7 @@ public class AiDeliveryTests
     public async Task An_empty_shelf_is_a_true_census_of_an_empty_shelf()
     {
         var (charging, reader) = Wire(
-            c => new AnthropicShelfCensusReader(c, Options.Create(new LlmOptions()),
+            c => new AnthropicShelfCensusReader(c, new LlmOptions(),
                 NullLogger<AnthropicShelfCensusReader>.Instance),
             """{ "items": [] }""");
 
@@ -267,7 +266,7 @@ public class AiDeliveryTests
     // ---- a chat turn settles at the WRITE, not on the way out -------------------------------------
 
     private static AnthropicPantryChat Chat(Microsoft.Extensions.AI.IChatClient c, FakePantryStore store) =>
-        new(c, Options.Create(new LlmOptions()), store, NullLogger<AnthropicPantryChat>.Instance);
+        new(c, new LlmOptions(), store, NullLogger<AnthropicPantryChat>.Instance);
 
     private static Product Purchased(int id, string name) =>
         new()
@@ -401,7 +400,7 @@ public class AiDeliveryTests
         // The reply names no tag, so the dedup declines — declining on an answer is still an answer.
         var charging = new ChargingChatClient(FakeChatClient.Returning(Responses.Text("\U0001F44D")));
 
-        var match = await new AnthropicTagAdvisor(charging, Options.Create(new LlmOptions()),
+        var match = await new AnthropicTagAdvisor(charging, new LlmOptions(),
             NullLogger<AnthropicTagAdvisor>.Instance).FindSynonymAsync("Snack", ExistingTags);
 
         Assert.Null(match);
@@ -456,7 +455,7 @@ public class AiDeliveryTests
         // ⚠️ And "!" alongside ".", because the first shared definition drew the line at "empty once
         // periods and spaces are stripped" — a parser's convenience promoted into a billing predicate,
         // under which "." refunded and "!" was charged in full. Both are a model that said nothing.
-        var opts = Options.Create(new LlmOptions());
+        var opts = new LlmOptions();
         var refunds = new List<int?>();
 
         foreach (var run in new Func<ChargingChatClient, Task>[]
@@ -489,7 +488,7 @@ public class AiDeliveryTests
         // Distinct from "NONE": the model produced no text, which is not an answer to anything. All four
         // prose advisors draw the line in the same place, and this is the one that proves the line exists.
         var (charging, advisor) = Wire(
-            c => new AnthropicProductSubstituteAdvisor(c, Options.Create(new LlmOptions()),
+            c => new AnthropicProductSubstituteAdvisor(c, new LlmOptions(),
                 NullLogger<AnthropicProductSubstituteAdvisor>.Instance),
             "   ");
 

@@ -1,7 +1,6 @@
 using System.Reflection;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Billing;
 
@@ -18,13 +17,13 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
     private static readonly string AdaptSystemPrompt = ReadEmbedded("Prompts.recipe-adapt-system.txt");
 
     private readonly IChatClient _chat;
-    private readonly LlmOptions _options;
+    private readonly IAiModelChoice _models;
     private readonly ILogger<AnthropicRecipeAdvisor> _logger;
 
-    public AnthropicRecipeAdvisor(IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicRecipeAdvisor> logger)
+    public AnthropicRecipeAdvisor(IChatClient chat, IAiModelChoice models, ILogger<AnthropicRecipeAdvisor> logger)
     {
         _chat = chat;
-        _options = options.Value;
+        _models = models;
         _logger = logger;
     }
 
@@ -45,7 +44,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         };
         var options = new ChatOptions
         {
-            ModelId = _options.ChatModel,
+            ModelId = _models.ChatModel,
             MaxOutputTokens = 4096, // steps add length beyond name/blurb/ingredients
             ResponseFormat = ChatResponseFormat.ForJsonSchema(RecipeJson.Schema(), schemaName: "recipe_suggestions"),
         };
@@ -123,7 +122,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         };
         var options = new ChatOptions
         {
-            ModelId = _options.ChatModel,
+            ModelId = _models.ChatModel,
             MaxOutputTokens = 4096,
             ResponseFormat = ChatResponseFormat.ForJsonSchema(RecipeJson.Schema(), schemaName: "recipe_adaptation"),
         };

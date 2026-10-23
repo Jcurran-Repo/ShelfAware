@@ -1,6 +1,5 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Journal;
@@ -51,7 +50,7 @@ public class MealJournalChatTests
     }
 
     private static AnthropicPantryChat Chat(IChatClient client, FakeMealJournal? journal, FakePantryStore? store = null) =>
-        new(client, Options.Create(new LlmOptions()), store ?? new FakePantryStore(), NullLogger<AnthropicPantryChat>.Instance,
+        new(client, new LlmOptions(), store ?? new FakePantryStore(), NullLogger<AnthropicPantryChat>.Instance,
             journal: journal);
 
     /// <summary>What the tool told the model, read off the conversation the model saw next.</summary>

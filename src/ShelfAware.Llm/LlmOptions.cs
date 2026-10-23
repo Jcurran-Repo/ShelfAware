@@ -1,6 +1,8 @@
 namespace ShelfAware.Llm;
 
-public class LlmOptions
+/// <summary>The server's AI configuration, bound from the <c>Llm</c> section. It is also the model choice
+/// (<see cref="IAiModelChoice"/>) wherever there is no visitor circuit to override it.</summary>
+public class LlmOptions : IAiModelChoice
 {
     public const string SectionName = "Llm";
 

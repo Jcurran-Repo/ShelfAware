@@ -2,7 +2,6 @@ using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Census;
 using ShelfAware.Core.Billing;
 using Category = ShelfAware.Core.Domain.Category;
@@ -63,13 +62,13 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
     """;
 
     private readonly IChatClient _chat;
-    private readonly LlmOptions _options;
+    private readonly IAiModelChoice _models;
     private readonly ILogger<AnthropicShelfCensusReader> _logger;
 
-    public AnthropicShelfCensusReader(IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicShelfCensusReader> logger)
+    public AnthropicShelfCensusReader(IChatClient chat, IAiModelChoice models, ILogger<AnthropicShelfCensusReader> logger)
     {
         _chat = chat;
-        _options = options.Value;
+        _models = models;
         _logger = logger;
     }
 
@@ -105,7 +104,7 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
 
         var options = new ChatOptions
         {
-            ModelId = _options.ExtractionModel,
+            ModelId = _models.ExtractionModel,
             MaxOutputTokens = 8192,
             ResponseFormat = ChatResponseFormat.ForJsonSchema(
                 JsonSerializer.Deserialize<JsonElement>(OutputSchemaJson),

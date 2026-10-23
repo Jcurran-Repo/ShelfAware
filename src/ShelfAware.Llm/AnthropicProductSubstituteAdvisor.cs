@@ -1,6 +1,5 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Billing;
 
@@ -16,14 +15,14 @@ public class AnthropicProductSubstituteAdvisor : IProductSubstituteAdvisor
     private const int MaxItems = 8;
 
     private readonly IChatClient _chat;
-    private readonly LlmOptions _options;
+    private readonly IAiModelChoice _models;
     private readonly ILogger<AnthropicProductSubstituteAdvisor> _logger;
 
     public AnthropicProductSubstituteAdvisor(
-        IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicProductSubstituteAdvisor> logger)
+        IChatClient chat, IAiModelChoice models, ILogger<AnthropicProductSubstituteAdvisor> logger)
     {
         _chat = chat;
-        _options = options.Value;
+        _models = models;
         _logger = logger;
     }
 
@@ -44,7 +43,7 @@ public class AnthropicProductSubstituteAdvisor : IProductSubstituteAdvisor
                 "product's own name. Reply as a short comma-separated list of lowercase phrases (2 to 6 " +
                 "items). If there are no meaningful swaps (a seasoning, a one-off, a staple), reply with only: NONE";
 
-            var options = new ChatOptions { ModelId = _options.ExtractionModel, MaxOutputTokens = 128 };
+            var options = new ChatOptions { ModelId = _models.ExtractionModel, MaxOutputTokens = 128 };
             var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
             var reply = response.Text.Trim();

@@ -37,6 +37,17 @@ public static class BillingOptionsValidation
             return "Billing:CostDollarsPerCredit × Billing:CreditMarkup gives a credit a retail price of one "
                  + "micro or less, so every existing balance would convert to roughly a million times itself.";
 
+        // A long-prompt threshold with no long-prompt rate would price every call past it at $0 — the one
+        // outcome FallbackRate exists to rule out ("never free"), and on the most expensive calls a box makes.
+        // The rates default to 0, so naming only the threshold in config is enough to cause it.
+        foreach (var (model, rate) in options.ModelRates)
+        {
+            if (rate.LongPromptAboveTokens is not null
+                && (rate.LongPromptInputPerMTok <= 0 || rate.LongPromptOutputPerMTok <= 0))
+                return $"Billing:ModelRates:{model} sets LongPromptAboveTokens but not both LongPromptInputPerMTok "
+                     + "and LongPromptOutputPerMTok, so every call past that prompt size would be recorded as free.";
+        }
+
         if (sellsCredits && !BillingCatalog.PacksMatchTheAnchor(options))
             return "Billing:CostDollarsPerCredit / Billing:CreditMarkup no longer produce BillingCatalog's "
                  + "pack sizes. A pack's size is a product decision: update BillingCatalog (and the "

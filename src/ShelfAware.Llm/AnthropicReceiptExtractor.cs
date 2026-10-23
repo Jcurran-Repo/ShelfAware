@@ -2,7 +2,6 @@ using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Billing;
 using ShelfAware.Core.Extraction;
 using Category = ShelfAware.Core.Domain.Category;
@@ -54,13 +53,13 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
     """;
 
     private readonly IChatClient _chat;
-    private readonly LlmOptions _options;
+    private readonly IAiModelChoice _models;
     private readonly ILogger<AnthropicReceiptExtractor> _logger;
 
-    public AnthropicReceiptExtractor(IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicReceiptExtractor> logger)
+    public AnthropicReceiptExtractor(IChatClient chat, IAiModelChoice models, ILogger<AnthropicReceiptExtractor> logger)
     {
         _chat = chat;
-        _options = options.Value;
+        _models = models;
         _logger = logger;
     }
 
@@ -102,7 +101,7 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
 
         var options = new ChatOptions
         {
-            ModelId = _options.ExtractionModel,
+            ModelId = _models.ExtractionModel,
             MaxOutputTokens = 8192,
             ResponseFormat = ChatResponseFormat.ForJsonSchema(
                 JsonSerializer.Deserialize<JsonElement>(OutputSchemaJson),

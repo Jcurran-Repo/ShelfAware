@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Extraction;
 
@@ -8,7 +7,7 @@ namespace ShelfAware.Llm.Tests;
 public class ReceiptExtractorTests
 {
     private static AnthropicReceiptExtractor Extractor(FakeChatClient client) =>
-        new(client, Options.Create(new LlmOptions()), NullLogger<AnthropicReceiptExtractor>.Instance);
+        new(client, new LlmOptions(), NullLogger<AnthropicReceiptExtractor>.Instance);
 
     private static readonly IReadOnlyList<ReceiptAttachment> OneImage = [new([1, 2, 3], "image/jpeg")];
 

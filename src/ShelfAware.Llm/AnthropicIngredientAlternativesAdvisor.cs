@@ -1,6 +1,5 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Billing;
 
@@ -16,14 +15,14 @@ public class AnthropicIngredientAlternativesAdvisor : IIngredientAlternativesAdv
     private const int MaxItems = 6;
 
     private readonly IChatClient _chat;
-    private readonly LlmOptions _options;
+    private readonly IAiModelChoice _models;
     private readonly ILogger<AnthropicIngredientAlternativesAdvisor> _logger;
 
     public AnthropicIngredientAlternativesAdvisor(
-        IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicIngredientAlternativesAdvisor> logger)
+        IChatClient chat, IAiModelChoice models, ILogger<AnthropicIngredientAlternativesAdvisor> logger)
     {
         _chat = chat;
-        _options = options.Value;
+        _models = models;
         _logger = logger;
     }
 
@@ -41,7 +40,7 @@ public class AnthropicIngredientAlternativesAdvisor : IIngredientAlternativesAdv
                 "itself. Reply as a short comma-separated list of lowercase phrases (2 to 6). If there are no " +
                 "meaningful swaps (a spice, a very specific one-off), reply with only: NONE";
 
-            var options = new ChatOptions { ModelId = _options.ExtractionModel, MaxOutputTokens = 128 };
+            var options = new ChatOptions { ModelId = _models.ExtractionModel, MaxOutputTokens = 128 };
             var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
             var reply = response.Text.Trim();

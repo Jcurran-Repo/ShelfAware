@@ -39,7 +39,7 @@ public class ProviderErrorCopyTests
     // ---- Receipt extraction --------------------------------------------------------------------
 
     private static AnthropicReceiptExtractor Extractor(FakeChatClient client) =>
-        new(client, Options.Create(new LlmOptions()), NullLogger<AnthropicReceiptExtractor>.Instance);
+        new(client, new LlmOptions(), NullLogger<AnthropicReceiptExtractor>.Instance);
 
     private static readonly IReadOnlyList<ReceiptAttachment> OneImage = [new([1, 2, 3], "image/jpeg")];
 
@@ -77,7 +77,7 @@ public class ProviderErrorCopyTests
     // ---- Shelf census --------------------------------------------------------------------------
 
     private static AnthropicShelfCensusReader Reader(FakeChatClient client) =>
-        new(client, Options.Create(new LlmOptions()), NullLogger<AnthropicShelfCensusReader>.Instance);
+        new(client, new LlmOptions(), NullLogger<AnthropicShelfCensusReader>.Instance);
 
     private static readonly IReadOnlyList<ShelfPhoto> OnePhoto = [new([1, 2, 3], "image/jpeg")];
 
@@ -108,7 +108,7 @@ public class ProviderErrorCopyTests
     // ---- Recipe import -------------------------------------------------------------------------
 
     private static AnthropicRecipeImporter Importer(FakeChatClient client) =>
-        new(client, Options.Create(new LlmOptions()), NullLogger<AnthropicRecipeImporter>.Instance);
+        new(client, new LlmOptions(), NullLogger<AnthropicRecipeImporter>.Instance);
 
     [Fact]
     public async Task An_unparseable_recipe_import_says_the_same_thing_whatever_the_model_returned()
@@ -175,7 +175,7 @@ public class ProviderErrorCopyTests
         // chat turn is the surface a household uses most.
         var chat = new AnthropicPantryChat(
             new FakeChatClient(() => throw new HttpRequestException(Secret)),
-            Options.Create(new LlmOptions()),
+            new LlmOptions(),
             new FakePantryStore(),
             NullLogger<AnthropicPantryChat>.Instance);
 

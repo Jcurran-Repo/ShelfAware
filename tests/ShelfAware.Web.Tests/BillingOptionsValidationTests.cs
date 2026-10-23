@@ -27,6 +27,28 @@ public class BillingOptionsValidationTests
     public void An_anchor_of_zero_or_less_refuses_to_start(double anchor) =>
         Assert.Contains("CostDollarsPerCredit", Check(new BillingOptions { CostDollarsPerCredit = (decimal)anchor }));
 
+    [Theory]
+    [InlineData(0, 2.5)]
+    [InlineData(0.5, 0)]
+    public void A_long_prompt_threshold_without_both_long_rates_refuses_to_start(double input, double output)
+    {
+        var o = new BillingOptions();
+        o.ModelRates["claude-haiku-5-5"].LongPromptInputPerMTok = (decimal)input;
+        o.ModelRates["claude-haiku-5-5"].LongPromptOutputPerMTok = (decimal)output;
+
+        Assert.Contains("ModelRates:claude-haiku-5-5", Check(o));
+        Assert.Contains("ModelRates:claude-haiku-5-5", Check(o, sellsCredits: false)); // free is wrong on any box
+    }
+
+    [Fact]
+    public void A_model_with_one_rate_needs_no_long_prompt_rates()
+    {
+        var o = new BillingOptions();
+        o.ModelRates["some-model"] = new ModelRate { InputPerMTok = 1m, OutputPerMTok = 5m };
+
+        Assert.Null(Check(o));
+    }
+
     [Fact]
     public void A_markup_of_zero_refuses_to_start() =>
         Assert.Contains("CreditMarkup", Check(new BillingOptions { CreditMarkup = 0m }));

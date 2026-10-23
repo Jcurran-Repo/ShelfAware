@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Recipes;
@@ -16,14 +15,14 @@ public class PantryChatTests
     private static CookAlongState Reader(int steps) => new(steps);
 
     private static AnthropicPantryChat Chat(FakeChatClient client, FakePantryStore store) =>
-        new(client, Options.Create(new LlmOptions()), store, NullLogger<AnthropicPantryChat>.Instance);
+        new(client, new LlmOptions(), store, NullLogger<AnthropicPantryChat>.Instance);
 
     private static Product P(int id, string name, Category category = Category.Other) =>
         new() { Id = id, Name = name, Category = category };
 
     private static AnthropicPantryChat ChatWithRecipe(
         FakeChatClient client, FakePantryStore store, IRecipeAdvisor advisor, IAppSettings? settings = null) =>
-        new(client, Options.Create(new LlmOptions()), store, NullLogger<AnthropicPantryChat>.Instance,
+        new(client, new LlmOptions(), store, NullLogger<AnthropicPantryChat>.Instance,
             recipeAdvisor: advisor, settings: settings);
 
     // One on-hand main (steak), one missing main (zucchini), one missing seasoning (soy sauce).
@@ -62,7 +61,7 @@ public class PantryChatTests
     // --- set_expiration ------------------------------------------------------
 
     private static AnthropicPantryChat ChatWithSettings(FakeChatClient client, FakePantryStore store, IAppSettings settings) =>
-        new(client, Options.Create(new LlmOptions()), store, NullLogger<AnthropicPantryChat>.Instance, settings: settings);
+        new(client, new LlmOptions(), store, NullLogger<AnthropicPantryChat>.Instance, settings: settings);
 
     private static Product Purchased(int id, string name, Category category = Category.Dairy) =>
         new()
@@ -1005,7 +1004,7 @@ public class PantryChatTests
         var client = new FakeChatClient(
             () => Responses.ToolCalls(Responses.Call("add_purchase", ("product_name", "coffee"))),
             () => Responses.Text("Sorry — I couldn't log that just now."));
-        var chat = new AnthropicPantryChat(client, Options.Create(new LlmOptions()), store,
+        var chat = new AnthropicPantryChat(client, new LlmOptions(), store,
             NullLogger<AnthropicPantryChat>.Instance);
 
         var result = await chat.HandleAsync("i bought coffee"); // must not throw
@@ -1055,7 +1054,7 @@ public class PantryChatTests
         var client = new FakeChatClient(
             () => Responses.ToolCalls(Responses.Call("suggest_substitutes", ("product_name", "chicken tenderloins"))),
             () => Responses.Text("Added substitutes for Chicken Breast Tenderloins."));
-        var chat = new AnthropicPantryChat(client, Options.Create(new LlmOptions()), store,
+        var chat = new AnthropicPantryChat(client, new LlmOptions(), store,
             NullLogger<AnthropicPantryChat>.Instance, substituteAdvisor: advisor);
 
         var result = await chat.HandleAsync("generate substitutes for the chicken tenderloins");
@@ -1075,7 +1074,7 @@ public class PantryChatTests
         var client = new FakeChatClient(
             () => Responses.ToolCalls(Responses.Call("adapt_recipe", ("recipe_name", "carbonara"))),
             () => Responses.Text("Adapted it."));
-        var chat = new AnthropicPantryChat(client, Options.Create(new LlmOptions()), store,
+        var chat = new AnthropicPantryChat(client, new LlmOptions(), store,
             NullLogger<AnthropicPantryChat>.Instance, recipeAdapter: adapter);
 
         var result = await chat.HandleAsync("adapt the carbonara to what I have");

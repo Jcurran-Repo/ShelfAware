@@ -1,6 +1,5 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Billing;
 using ShelfAware.Core.Tagging;
@@ -18,14 +17,14 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
     private const int MaxItems = 5;
 
     private readonly IChatClient _chat;
-    private readonly LlmOptions _options;
+    private readonly IAiModelChoice _models;
     private readonly ILogger<AnthropicRecipeTagAdvisor> _logger;
 
     public AnthropicRecipeTagAdvisor(
-        IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicRecipeTagAdvisor> logger)
+        IChatClient chat, IAiModelChoice models, ILogger<AnthropicRecipeTagAdvisor> logger)
     {
         _chat = chat;
-        _options = options.Value;
+        _models = models;
         _logger = logger;
     }
 
@@ -62,7 +61,7 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
                 "Reply as a short comma-separated list, each tag in Title Case (2 to 4 items). If nothing " +
                 "fits, reply with only: NONE";
 
-            var options = new ChatOptions { ModelId = _options.ExtractionModel, MaxOutputTokens = 64 };
+            var options = new ChatOptions { ModelId = _models.ExtractionModel, MaxOutputTokens = 64 };
             var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
             var reply = response.Text.Trim();

@@ -1,6 +1,5 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
 
 namespace ShelfAware.Llm.Tests;
@@ -11,7 +10,7 @@ namespace ShelfAware.Llm.Tests;
 public class RecipeImporterTests
 {
     private static AnthropicRecipeImporter Importer(FakeChatClient chat) =>
-        new(chat, Options.Create(new LlmOptions()), NullLogger<AnthropicRecipeImporter>.Instance);
+        new(chat, new LlmOptions(), NullLogger<AnthropicRecipeImporter>.Instance);
 
     private static readonly RecipePhoto OneImage = new([1, 2, 3], "image/jpeg");
 

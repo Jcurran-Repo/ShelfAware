@@ -30,9 +30,22 @@ internal static class AnthropicThinking
         "claude-haiku-5-5",
     };
 
+    // Models that never think unless a call asks them to, so a call that says nothing runs as it did on 4.5.
+    private static readonly HashSet<string> ThinksOnlyWhenAsked = new(StringComparer.Ordinal)
+    {
+        "claude-haiku-4-5",
+        "claude-haiku-4-5-20251001",
+    };
+
     /// <summary>Whether a call to <paramref name="modelId"/> is sent with thinking turned off.</summary>
     public static bool TurnsOff(string? modelId) =>
         modelId is not null && ThinksUnlessTurnedOff.Contains(modelId);
+
+    /// <summary>Whether a call to <paramref name="modelId"/> makes the call the prompts were written for: either
+    /// this rule turns its thinking off, or it never thinks unless asked. What <see cref="AnthropicModels.Offered"/>
+    /// may hold. Sonnet 5.5 and Opus 5.5 are neither — they think by default and refuse to stop.</summary>
+    public static bool RunsAsWritten(string? modelId) =>
+        TurnsOff(modelId) || (modelId is not null && ThinksOnlyWhenAsked.Contains(modelId));
 
     /// <summary>The Anthropic client the factory hands out: <paramref name="inner"/> behind the framework's
     /// <c>ConfigureOptions</c> decorator, which clones the caller's options (or makes empty ones) and runs

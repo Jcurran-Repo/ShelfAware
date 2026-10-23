@@ -1,8 +1,6 @@
 using System.Text.Json;
-using Anthropic;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Evaluation;
 using ShelfAware.Core.Extraction;
@@ -39,11 +37,13 @@ if (!Directory.Exists(fixturesDir))
     return 1;
 }
 
-var model = new LlmOptions().ExtractionModel;
-var chatClient = new AnthropicClient { ApiKey = apiKey }.AsIChatClient(model);
+// Through the app's own factory, so the eval sends the request production sends — including
+// AnthropicThinking's rule. A bare AsIChatClient would measure a Haiku 5.5 that thinks, which no box runs.
+var models = new LlmOptions();
+var chatClient = new ChatClientFactory().Create(AiProvider.Anthropic, apiKey, models.ExtractionModel);
 IReceiptExtractor extractor = new AnthropicReceiptExtractor(
     chatClient,
-    Options.Create(new LlmOptions { ApiKey = apiKey }),
+    models,
     NullLogger<AnthropicReceiptExtractor>.Instance);
 
 var expectedFiles = Directory.GetFiles(fixturesDir, "*.expected.json").OrderBy(f => f).ToList();
@@ -90,7 +90,7 @@ var aggregate = ExtractionScorer.Aggregate(scores);
 var results = new EvalResults
 {
     GeneratedAt = DateTimeOffset.Now,
-    Model = model,
+    Model = models.ExtractionModel,
     Aggregate = aggregate,
     Fixtures = scores,
 };

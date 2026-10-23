@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
+using ShelfAware.Web.Services;
 
 namespace ShelfAware.Web.Data;
 
@@ -15,7 +16,9 @@ namespace ShelfAware.Web.Data;
 /// interface so the page can be tested with a fake, while the real detached runner gets its own test.</summary>
 public interface IMealPlanJobs
 {
-    void Start(string householdId);
+    /// <param name="ai">The asking circuit's own AI settings (<see cref="CircuitAiSettings.Carry"/>), so the
+    /// job runs on the visitor's key and model rather than the server's; null when the circuit has none.</param>
+    void Start(string householdId, CircuitAiSettings.Carried? ai);
     MealPlanJobSnapshot? Current(string householdId);
 }
 
@@ -30,7 +33,7 @@ public sealed class MealPlanJobs(IServiceScopeFactory scopeFactory, ILogger<Meal
 
     /// <summary>Start a generation for the household unless one is already running, so a double-click or a
     /// second tab doesn't launch two.</summary>
-    public void Start(string householdId)
+    public void Start(string householdId, CircuitAiSettings.Carried? ai)
     {
         while (true)
         {
@@ -38,20 +41,21 @@ public sealed class MealPlanJobs(IServiceScopeFactory scopeFactory, ILogger<Meal
             {
                 if (existing.IsRunning) return;                       // already generating — leave it be
                 var replacement = new MealPlanJob();
-                if (_jobs.TryUpdate(householdId, replacement, existing)) { Launch(householdId, replacement); return; }
+                if (_jobs.TryUpdate(householdId, replacement, existing)) { Launch(householdId, replacement, ai); return; }
             }
             else
             {
                 var fresh = new MealPlanJob();
-                if (_jobs.TryAdd(householdId, fresh)) { Launch(householdId, fresh); return; }
+                if (_jobs.TryAdd(householdId, fresh)) { Launch(householdId, fresh, ai); return; }
             }
             // Lost the race to another thread — loop and re-read what's there now.
         }
     }
 
-    private void Launch(string householdId, MealPlanJob job) => _ = Task.Run(() => RunAsync(householdId, job));
+    private void Launch(string householdId, MealPlanJob job, CircuitAiSettings.Carried? ai) =>
+        _ = Task.Run(() => RunAsync(householdId, job, ai));
 
-    private async Task RunAsync(string householdId, MealPlanJob job)
+    private async Task RunAsync(string householdId, MealPlanJob job, CircuitAiSettings.Carried? ai)
     {
         try
         {
@@ -59,6 +63,9 @@ public sealed class MealPlanJobs(IServiceScopeFactory scopeFactory, ILogger<Meal
             // Pin the household on the fresh scope (no circuit / HttpContext here to infer it from) — the
             // same UseFixed pattern the startup work and DevAuth seeding use.
             scope.ServiceProvider.GetRequiredService<ICurrentHousehold>().UseFixed(householdId);
+            // And the visitor's AI settings, for the same reason: this scope's CircuitAiSettings starts from
+            // server config, which on a BYOK box has no key at all.
+            if (ai is not null) scope.ServiceProvider.GetRequiredService<CircuitAiSettings>().Apply(ai);
             var planner = scope.ServiceProvider.GetRequiredService<MealPlanService>();
             // CancellationToken.None on purpose: a background plan must finish even after the circuit that
             // asked for it is gone — that's the whole point of running it detached.

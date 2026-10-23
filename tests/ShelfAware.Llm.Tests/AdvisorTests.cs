@@ -1,6 +1,5 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Tagging;
 
 namespace ShelfAware.Llm.Tests;
@@ -12,7 +11,7 @@ namespace ShelfAware.Llm.Tests;
 public class TagAdvisorTests
 {
     private static AnthropicTagAdvisor Advisor(IChatClient chat) =>
-        new(chat, Options.Create(new LlmOptions()), NullLogger<AnthropicTagAdvisor>.Instance);
+        new(chat, new LlmOptions(), NullLogger<AnthropicTagAdvisor>.Instance);
 
     private static readonly string[] Existing = ["Condiment", "Soft Drink", "Paper Goods"];
 
@@ -250,7 +249,7 @@ public class TagAdvisorTests
 public class ProductSubstituteAdvisorTests
 {
     private static AnthropicProductSubstituteAdvisor Advisor(FakeChatClient chat) =>
-        new(chat, Options.Create(new LlmOptions()), NullLogger<AnthropicProductSubstituteAdvisor>.Instance);
+        new(chat, new LlmOptions(), NullLogger<AnthropicProductSubstituteAdvisor>.Instance);
 
     [Fact]
     public async Task Parses_the_comma_list_lowercased_deduped_and_without_the_products_own_name()
@@ -297,7 +296,7 @@ public class ProductSubstituteAdvisorTests
 public class IngredientAlternativesAdvisorTests
 {
     private static AnthropicIngredientAlternativesAdvisor Advisor(FakeChatClient chat) =>
-        new(chat, Options.Create(new LlmOptions()), NullLogger<AnthropicIngredientAlternativesAdvisor>.Instance);
+        new(chat, new LlmOptions(), NullLogger<AnthropicIngredientAlternativesAdvisor>.Instance);
 
     [Fact]
     public async Task Parses_swaps_without_repeating_the_ingredient_itself()
