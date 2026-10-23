@@ -124,6 +124,9 @@ jobs:
             # other change fails as before: a Core test (something should have re-run), a .csproj or other
             # non-C# file, a deleted file, or a name we can't match to one report entry — unproven is not read.
             # If a PR genuinely trips this with nothing to test, say so on the PR so a reviewer can agree.
+            # Fail-closed at both ends: an empty list (unreachable while core=true means a non-empty file, but
+            # an empty loop would otherwise pass) and an entry with no mutants ARRAY (a truncated or reshaped
+            # report must not read as "zero mutants") are unproven, not proof.
             unproven="$(jq -R -s -r --slurpfile report "$report" '
               ($report[0].files) as $files | [$files | keys[]] as $keys
               | split("\n") | map(select(length > 0)) as $changed
@@ -132,6 +135,7 @@ jobs:
                   | if (startswith("src/ShelfAware.Core/") and endswith(".cs") | not) then "\($c): not a Core source file"
                     else [$keys[] | select(endswith("/" + $c))] as $m
                     | if ($m | length) != 1 then "\($c): not in the report exactly once"
+                      elif ($files[$m[0]].mutants | type) != "array" then "\($c): report entry has no mutants list"
                       elif ($files[$m[0]].mutants | length) > 0 then "\($c): \($files[$m[0]].mutants | length) mutants, none tested"
                       else empty end
                     end
