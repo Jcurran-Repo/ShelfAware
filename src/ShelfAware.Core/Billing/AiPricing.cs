@@ -6,6 +6,19 @@ public sealed class ModelRate
 {
     public decimal InputPerMTok { get; set; }
     public decimal OutputPerMTok { get; set; }
+
+    /// <summary>The prompt size, in input tokens, above which the WHOLE call is priced at
+    /// <see cref="LongPromptInputPerMTok"/> / <see cref="LongPromptOutputPerMTok"/> — or null for a model with
+    /// one rate at every length. Claude Haiku 5.5 is the case: $0.10 / $0.50 up to 100K prompt tokens and
+    /// $0.50 / $2.50 beyond, on input AND output. ⚠️ Not a marginal rate: a 100,001-token prompt prices all of
+    /// its tokens at the long rate, which is how the provider bills it.</summary>
+    public long? LongPromptAboveTokens { get; set; }
+
+    /// <summary>Input rate for a prompt past <see cref="LongPromptAboveTokens"/>.</summary>
+    public decimal LongPromptInputPerMTok { get; set; }
+
+    /// <summary>Output rate for a call whose prompt is past <see cref="LongPromptAboveTokens"/>.</summary>
+    public decimal LongPromptOutputPerMTok { get; set; }
 }
 
 /// <summary>
@@ -112,7 +125,11 @@ public sealed class BillingOptions
     {
         ["claude-haiku-4-5"] = new() { InputPerMTok = 1.00m, OutputPerMTok = 5.00m },
         ["claude-haiku-4-5-20251001"] = new() { InputPerMTok = 1.00m, OutputPerMTok = 5.00m },
-        ["claude-haiku-5-5"] = new() { InputPerMTok = 0.10m, OutputPerMTok = 0.50m },
+        ["claude-haiku-5-5"] = new()
+        {
+            InputPerMTok = 0.10m, OutputPerMTok = 0.50m,
+            LongPromptAboveTokens = 100_000, LongPromptInputPerMTok = 0.50m, LongPromptOutputPerMTok = 2.50m,
+        },
         ["claude-sonnet-4-6"] = new() { InputPerMTok = 3.00m, OutputPerMTok = 15.00m },
         ["claude-sonnet-5"] = new() { InputPerMTok = 2.00m, OutputPerMTok = 10.00m },
         ["claude-sonnet-5-5"] = new() { InputPerMTok = 2.00m, OutputPerMTok = 10.00m },
@@ -149,13 +166,17 @@ public static class AiPricing
             : options.FallbackRate;
 
     /// <summary>The COST of one call in micros, rounded to the nearest micro. Token counts below zero
-    /// (an under-reporting provider, or a bug) clamp to zero — never a negative cost.</summary>
+    /// (an under-reporting provider, or a bug) clamp to zero — never a negative cost. A prompt past the
+    /// model's <see cref="ModelRate.LongPromptAboveTokens"/> prices the whole call at the long-prompt rate.</summary>
     public static long CostMicros(BillingOptions options, string? model, long inputTokens, long outputTokens)
     {
         var rate = RateFor(options, model);
         var input = Math.Max(0, inputTokens);
         var output = Math.Max(0, outputTokens);
-        var micros = input * rate.InputPerMTok + output * rate.OutputPerMTok;
+        var longPrompt = input > rate.LongPromptAboveTokens;
+        var micros = longPrompt
+            ? input * rate.LongPromptInputPerMTok + output * rate.LongPromptOutputPerMTok
+            : input * rate.InputPerMTok + output * rate.OutputPerMTok;
         return (long)Math.Round(micros, MidpointRounding.AwayFromZero);
     }
 

@@ -19,18 +19,58 @@ public class AiPricingTests
         Assert.Equal(6_000_000, AiPricing.CostMicros(Defaults, "claude-haiku-4-5", 1_000_000, 1_000_000));
     }
 
-    // The current catalog the Settings picker offers, each at its own row rather than the fallback tier
-    // ($5/$25, i.e. 30,000,000 micros for a million of each) — a missing row overstated a BYOK call by up
-    // to fifty times on /admin. A million tokens each way is the rate pair summed, in micros.
+    // The current catalog, whether Settings offers the model or a BYOK visitor types it in, each at its own
+    // row rather than the fallback tier ($5/$25, i.e. 30,000,000 micros for a million of each) — a missing
+    // row overstated a BYOK call by up
+    // to fifty times on /admin. A tenth of a million tokens each way is a tenth of the rate pair summed, in
+    // micros — 100K rather than a million so Haiku 5.5's prompt stays inside its standard tier (see below).
     [Theory]
-    [InlineData("claude-haiku-5-5", 600_000)]       // $0.10 + $0.50
-    [InlineData("claude-sonnet-5", 12_000_000)]     // $2 + $10
-    [InlineData("claude-sonnet-5-5", 12_000_000)]   // $2 + $10
-    [InlineData("claude-opus-5-5", 24_000_000)]     // $4 + $20
+    [InlineData("claude-haiku-5-5", 60_000)]        // ($0.10 + $0.50) / 10
+    [InlineData("claude-sonnet-5", 1_200_000)]      // ($2 + $10) / 10
+    [InlineData("claude-sonnet-5-5", 1_200_000)]    // ($2 + $10) / 10
+    [InlineData("claude-opus-5-5", 2_400_000)]      // ($4 + $20) / 10
     public void The_current_catalog_is_priced_at_its_own_rate(string model, long micros) =>
         // A fresh options object, not the shared static: one built once per class run would hold whichever
         // rate table existed when it was first touched.
-        Assert.Equal(micros, AiPricing.CostMicros(new BillingOptions(), model, 1_000_000, 1_000_000));
+        Assert.Equal(micros, AiPricing.CostMicros(new BillingOptions(), model, 100_000, 100_000));
+
+    [Fact]
+    public void Haiku_5_5_up_to_100K_prompt_tokens_is_the_standard_rate()
+    {
+        // 100,000 in × 0.10 + 1,000 out × 0.50 = 10,000 + 500. The boundary itself is still standard: the
+        // published card is "prompts up to 100K", so it is ABOVE 100K that changes the price.
+        Assert.Equal(10_500, AiPricing.CostMicros(new BillingOptions(), "claude-haiku-5-5", 100_000, 1_000));
+    }
+
+    [Fact]
+    public void Haiku_5_5_past_100K_prompt_tokens_prices_the_whole_call_at_the_long_rate()
+    {
+        // ⚠️ The under-stamp this closes: one token past the line and the call used to be recorded at a fifth
+        // of what it cost. The long rate covers EVERY token, input and output, not just the excess:
+        // 100,001 in × 0.50 + 1,000 out × 2.50 = 50,000.5 + 2,500 = 52,500.5, rounded away from zero.
+        Assert.Equal(52_501, AiPricing.CostMicros(new BillingOptions(), "claude-haiku-5-5", 100_001, 1_000));
+    }
+
+    [Fact]
+    public void A_model_with_one_rate_never_switches_however_long_the_prompt()
+    {
+        // Sonnet 5.5 has no long-prompt card: a million in + a million out is its plain $2 + $10.
+        Assert.Equal(12_000_000, AiPricing.CostMicros(new BillingOptions(), "claude-sonnet-5-5", 1_000_000, 1_000_000));
+    }
+
+    [Fact]
+    public void An_operator_configured_threshold_is_the_one_that_applies()
+    {
+        var o = new BillingOptions();
+        o.ModelRates["claude-haiku-4-5"] = new ModelRate
+        {
+            InputPerMTok = 1m, OutputPerMTok = 5m,
+            LongPromptAboveTokens = 10, LongPromptInputPerMTok = 2m, LongPromptOutputPerMTok = 10m,
+        };
+
+        Assert.Equal(10 + 5, AiPricing.CostMicros(o, "claude-haiku-4-5", 10, 1));   // at the line: standard
+        Assert.Equal(22 + 10, AiPricing.CostMicros(o, "claude-haiku-4-5", 11, 1));  // past it: long, both sides
+    }
 
     [Fact]
     public void The_dated_and_undated_haiku_ids_price_the_same()
