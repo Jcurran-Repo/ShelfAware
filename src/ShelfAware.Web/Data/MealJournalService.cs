@@ -22,13 +22,28 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
     /// <summary>Record one food. A draft without the person's own number takes the one they last gave for that
     /// food (<see cref="MealJournal.Recall"/>) — here, on the write path, so Reginald and the page's add form
     /// cannot disagree about whether a correction is remembered.</summary>
-    public Task<JournalWrite> LogAsync(JournalDraft draft, CancellationToken cancellationToken = default) =>
-        WriteAsync(draft, recall: true, cancellationToken);
+    public async Task<JournalWrite> LogAsync(JournalDraft draft, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        if (db.MemberId is null) return JournalWrite.Refused(NobodySignedIn);
 
-    /// <summary>Put a removed entry back exactly as it was — the page's undo. No recall: an undo that came back
-    /// with a different number would not be an undo.</summary>
-    public Task<JournalWrite> RestoreAsync(JournalDraft draft, CancellationToken cancellationToken = default) =>
-        WriteAsync(draft, recall: false, cancellationToken);
+        var (written, recalled) = MealJournal.Recall(draft, await RememberedAsync(db, cancellationToken));
+        var given = MealJournal.GivesNumber(before: null, written);
+        return await AddAsync(db, written, given ? DateTimeOffset.Now : null, recalled, remembered: given && !recalled,
+            cancellationToken);
+    }
+
+    /// <summary>Put a removed entry back exactly as it was — the page's undo — including when its number was
+    /// given. No recall and no fresh stamp: an undo that came back with a different number, or that made a
+    /// stale number the remembered one, would not be an undo.</summary>
+    public async Task<JournalWrite> RestoreAsync(JournalEntry removed, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        if (db.MemberId is null) return JournalWrite.Refused(NobodySignedIn);
+
+        var draft = new JournalDraft(removed.Food, removed.Slot, removed.EatenOn, removed.Calories, removed.CaloriesEstimated);
+        return await AddAsync(db, draft, removed.CaloriesGivenAt, recalled: false, remembered: false, cancellationToken);
+    }
 
     public async Task<IReadOnlyList<RememberedCalories>> RememberedAsync(CancellationToken cancellationToken = default)
     {
@@ -39,22 +54,18 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
 
     private static async Task<IReadOnlyList<RememberedCalories>> RememberedAsync(
         ShelfAwareDbContext db, CancellationToken cancellationToken) =>
-        // The WHERE only narrows the read; MealJournal.Remembered applies the rule itself.
         MealJournal.Remembered(await db.JournalEntries
             .AsNoTracking()
-            .Where(e => e.Calories != null && !e.CaloriesEstimated)
+            .Where(MealJournal.HasOwnNumber)
             .ToListAsync(cancellationToken));
 
-    private async Task<JournalWrite> WriteAsync(JournalDraft draft, bool recall, CancellationToken cancellationToken)
+    /// <summary>The one insert. The rule is asked here, on what is actually written — after a recall has
+    /// swapped in a remembered number, so a stored number cannot slip past a bound tightened since.</summary>
+    private static async Task<JournalWrite> AddAsync(ShelfAwareDbContext db, JournalDraft draft,
+        DateTimeOffset? caloriesGivenAt, bool recalled, bool remembered, CancellationToken cancellationToken)
     {
         if (MealJournal.Problem(draft.Food, draft.Calories, draft.EatenOn, Today) is { } problem)
             return JournalWrite.Refused(problem);
-
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        if (db.MemberId is null) return JournalWrite.Refused(NobodySignedIn);
-
-        var recalled = false;
-        if (recall) (draft, recalled) = MealJournal.Recall(draft, await RememberedAsync(db, cancellationToken));
 
         var entry = new JournalEntry
         {
@@ -63,11 +74,12 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
             EatenOn = draft.EatenOn,
             Calories = draft.Calories,
             CaloriesEstimated = draft.Calories is not null && draft.CaloriesEstimated,
+            CaloriesGivenAt = draft.IsOwnNumber ? caloriesGivenAt : null,
             LoggedAt = DateTimeOffset.Now,
         };
         db.JournalEntries.Add(entry);
         await db.SaveChangesAsync(cancellationToken);
-        return JournalWrite.Saved(entry, recalled);
+        return JournalWrite.Saved(entry, recalled, remembered);
     }
 
     public async Task<JournalRead> GetAsync(DateSpan span, CancellationToken cancellationToken = default)
@@ -94,13 +106,20 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
         var entry = await db.JournalEntries.FirstOrDefaultAsync(e => e.Id == id, cancellationToken);
         if (entry is null) return JournalWrite.Refused("That entry is no longer in your journal.");
 
+        // Asked before the fields move: whether this edit gives the food a number is a comparison with what
+        // the entry said until now.
+        var given = MealJournal.GivesNumber(entry, draft);
         entry.Food = draft.Food.Trim();
         entry.Slot = draft.Slot;
         entry.EatenOn = draft.EatenOn;
         entry.Calories = draft.Calories;
         entry.CaloriesEstimated = draft.Calories is not null && draft.CaloriesEstimated;
+        // A number they just gave is stamped now — the newest given, so the one remembered. One they left as
+        // it was keeps its stamp, and a number that is no longer theirs has none.
+        if (given) entry.CaloriesGivenAt = DateTimeOffset.Now;
+        else if (!draft.IsOwnNumber) entry.CaloriesGivenAt = null;
         await db.SaveChangesAsync(cancellationToken);
-        return JournalWrite.Saved(entry);
+        return JournalWrite.Saved(entry, remembered: given);
     }
 
     /// <summary>Remove an entry. False when it was already gone (or was never this person's).</summary>

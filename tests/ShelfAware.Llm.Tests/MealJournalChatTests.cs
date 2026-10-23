@@ -325,6 +325,23 @@ public class MealJournalChatTests
         Assert.DoesNotContain("from the saved", ToolReply(client));
     }
 
+    [Fact]
+    public async Task Servings_other_than_one_are_part_of_the_food_so_one_bowls_number_is_not_recalled_for_three()
+    {
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(7, "Chicken Chili", HasSteps: true, CaloriesPerServing: 420));
+        var journal = new FakeMealJournal();
+        journal.Entries.Add(Own("chili", 400));
+        var client = Script(
+            Responses.Call("log_meal", ("food", "chili"), ("meal", "Dinner"), ("recipe_name", "chili"), ("servings", 3)),
+            Responses.Call("log_meal", ("food", "chili"), ("meal", "Lunch"), ("recipe_name", "chili"), ("servings", 1.5)));
+
+        await Chat(client, journal, store).HandleAsync("three bowls of chili for dinner, and one and a half for lunch");
+
+        Assert.Equal([("Chicken Chili, 3 servings", 1260), ("Chicken Chili, 1.5 servings", 630)],
+            journal.Entries.Skip(1).Select(e => (e.Food, e.Calories!.Value)));
+    }
+
     // --- query_journal --------------------------------------------------------------------------
 
     [Fact]

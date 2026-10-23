@@ -321,7 +321,7 @@
             var saved = write.Entry!;
             // A number they just gave is the one the journal will reuse for this food — say so, so the
             // correction reads as a fix for next time and not only for today.
-            Notify(MealJournal.IsOwnNumber(saved) && saved.Calories != editingOriginalCalories
+            Notify(write.Remembered
                 ? $"Updated {saved.Food}. Next time you log {saved.Food}, it'll be {MealJournal.Total([saved]).KcalOrUncounted}."
                 : $"Updated {saved.Food}.");
             await LoadAsync();
@@ -380,7 +380,8 @@
         }
     }
 
-    /// <summary>Puts a removed food back as it was — same day, meal, calories and estimate flag. The journal
+    /// <summary>Puts a removed food back as it was — same day, meal, calories, estimate flag and when its number
+    /// was given, so an undo never changes which number the journal remembers for that food. The journal
     /// keeps no activity-log entry (History is household-wide), so this is its undo.</summary>
     private async Task UndoRemove()
     {
@@ -388,7 +389,7 @@
         busy = true;
         try
         {
-            var write = await Journal.RestoreAsync(new JournalDraft(item.Food, item.Slot, item.EatenOn, item.Calories, item.CaloriesEstimated));
+            var write = await Journal.RestoreAsync(item);
             Notify(write.Problem ?? $"Put {item.Food} back.", error: write.Problem is not null);
             await LoadAsync();
         }

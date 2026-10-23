@@ -38,9 +38,12 @@ public sealed record JournalDraft(string Food, MealSlot Slot, DateOnly EatenOn, 
 /// <summary>The outcome of a journal write: the saved entry, or why it wasn't saved.</summary>
 /// <param name="Recalled">True when the entry's calories are the person's remembered number for that food
 /// (<see cref="MealJournal.Recall"/>) rather than the number the draft came with.</param>
-public sealed record JournalWrite(JournalEntry? Entry, string? Problem, bool Recalled = false)
+/// <param name="Remembered">True when this write gave the food a number of the person's own
+/// (<see cref="MealJournal.GivesNumber"/>), which is now the number the next log of that food takes.</param>
+public sealed record JournalWrite(JournalEntry? Entry, string? Problem, bool Recalled = false, bool Remembered = false)
 {
-    public static JournalWrite Saved(JournalEntry entry, bool recalled = false) => new(entry, null, recalled);
+    public static JournalWrite Saved(JournalEntry entry, bool recalled = false, bool remembered = false) =>
+        new(entry, null, recalled, remembered);
     public static JournalWrite Refused(string problem) => new(null, problem);
 }
 

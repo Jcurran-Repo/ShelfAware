@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq.Expressions;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.MealPlanning;
 
@@ -160,25 +161,50 @@ public static class MealJournal
         return null;
     }
 
-    /// <summary>True when the entry's calories are the person's own — a number they said or typed, or one they
-    /// corrected — rather than an estimate or a blank. The one reading of "theirs" that the journal remembers.</summary>
-    public static bool IsOwnNumber(JournalEntry entry) => entry.Calories is not null && !entry.CaloriesEstimated;
+    /// <summary>The entry's calories are the person's own — a number they said or typed, or one they corrected
+    /// — rather than an estimate or a blank. An expression so the database read that narrows to these rows and
+    /// <see cref="IsOwnNumber"/> are one definition, not a predicate and its hand-copied SQL twin.</summary>
+    public static readonly Expression<Func<JournalEntry, bool>> HasOwnNumber =
+        e => e.Calories != null && !e.CaloriesEstimated;
+
+    private static readonly Func<JournalEntry, bool> HasOwnNumberCompiled = HasOwnNumber.Compile();
+
+    /// <summary><see cref="HasOwnNumber"/> for one entry — the one reading of "theirs" that the journal remembers.</summary>
+    public static bool IsOwnNumber(JournalEntry entry) => HasOwnNumberCompiled(entry);
+
+    /// <summary>A food description on one line, its runs of spacing (newlines included) folded to single spaces —
+    /// how a remembered name is shown, so a name can never break out of the line it is listed on.</summary>
+    public static string Flatten(string food) =>
+        string.Join(' ', food.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     /// <summary>The form two descriptions of a food are compared in: case and spacing don't make it a different
     /// food ("7 Brew  Blondie" is "7 brew blondie"); anything else — a size, a count — does, because a medium
     /// and a large are not the same number.</summary>
-    public static string FoodKey(string food) =>
-        string.Join(' ', food.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
+    public static string FoodKey(string food) => Flatten(food).ToLowerInvariant();
 
-    /// <summary>Every food the person has put their own number on, once each, most recently logged first, at
-    /// the number from that latest entry — so a correction made today replaces the one made last month.</summary>
+    /// <summary>True when writing <paramref name="draft"/> over <paramref name="before"/> (null for a new
+    /// entry) is the person giving that food a number now: a new number of theirs, a number that was an
+    /// estimate or blank until now, or their number moved onto a different food. What stamps
+    /// <see cref="JournalEntry.CaloriesGivenAt"/> — an edit that only moves the meal or the day gives nothing.</summary>
+    public static bool GivesNumber(JournalEntry? before, JournalDraft draft) =>
+        draft.IsOwnNumber
+        && (before is null
+            || !IsOwnNumber(before)
+            || before.Calories != draft.Calories
+            || FoodKey(before.Food) != FoodKey(draft.Food));
+
+    /// <summary>Every food the person has put their own number on, once each, most recently GIVEN first
+    /// (<see cref="JournalEntry.CaloriesGivenAt"/>, so correcting last month's entry today makes today's number
+    /// the one remembered), at that number. Entries from before the stamp existed, if any are left unstamped,
+    /// sort after every stamped one, newest logged first.</summary>
     public static IReadOnlyList<RememberedCalories> Remembered(IEnumerable<JournalEntry> history) =>
     [
         .. history
             .Where(IsOwnNumber)
-            .OrderByDescending(e => e.Id)
+            .OrderByDescending(e => e.CaloriesGivenAt)
+            .ThenByDescending(e => e.Id)
             .DistinctBy(e => FoodKey(e.Food))
-            .Select(e => new RememberedCalories(e.Food.Trim(), e.Calories!.Value)),
+            .Select(e => new RememberedCalories(Flatten(e.Food), e.Calories!.Value)),
     ];
 
     /// <summary>THE override rule: a draft that carries the person's own number is written as it is; any other

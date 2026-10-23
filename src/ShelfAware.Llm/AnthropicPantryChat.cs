@@ -785,6 +785,11 @@ public class AnthropicPantryChat : IPantryChat
                         if (servings <= 0 || servings > 20) return ("servings must be more than 0 and at most 20.", true);
                         calories = (int)Math.Round(perServing * servings, MidpointRounding.AwayFromZero);
                         note = $" (from the saved {recipe.Name} recipe)";
+                        // The servings are part of WHICH food this is: a remembered number for one bowl must
+                        // not be recalled over three, so a count other than one goes into the name it is
+                        // remembered by.
+                        if (servings != 1m)
+                            food = $"{recipe.Name}, {servings.ToString("0.##", CultureInfo.InvariantCulture)} servings";
                     }
                 }
 

@@ -170,11 +170,88 @@ public class MealJournalServiceTests : IDisposable
         // The page's undo: an estimate removed and put back is the same estimate, not a different number.
         var journal = As(Jordan);
         await journal.LogAsync(Draft(food: "Eggs", calories: 150, estimated: false, on: Today.AddDays(-1)));
+        var removed = (await journal.LogAsync(Draft(food: "Omelette", calories: 200))).Entry!;
+        removed.Food = "Eggs"; // as if it had been logged under the remembered name
+        await journal.DeleteAsync(removed.Id);
 
-        var restored = await journal.RestoreAsync(Draft(food: "Eggs", calories: 200, estimated: true));
+        var restored = await journal.RestoreAsync(removed);
 
         Assert.False(restored.Recalled);
         Assert.Equal((200, true), (restored.Entry!.Calories, restored.Entry.CaloriesEstimated));
+    }
+
+    [Fact]
+    public async Task Correcting_an_older_entry_makes_its_number_the_remembered_one()
+    {
+        var journal = As(Jordan);
+        var older = (await journal.LogAsync(Draft(food: "Blondie", calories: 300, estimated: false, on: Today.AddDays(-14)))).Entry!;
+        await journal.LogAsync(Draft(food: "Blondie", calories: 300, estimated: false, on: Today.AddDays(-1)));
+
+        var fix = await journal.UpdateAsync(older.Id, Draft(food: "Blondie", calories: 600, estimated: false, on: older.EatenOn));
+
+        Assert.True(fix.Remembered);
+        Assert.Equal([new RememberedCalories("Blondie", 600)], await journal.RememberedAsync());
+    }
+
+    [Fact]
+    public async Task An_edit_that_only_moves_the_meal_gives_no_number_and_says_so()
+    {
+        var journal = As(Jordan);
+        var entry = (await journal.LogAsync(Draft(food: "Blondie", calories: 300, estimated: false))).Entry!;
+        var givenAt = entry.CaloriesGivenAt;
+
+        var moved = await journal.UpdateAsync(entry.Id, Draft(food: "Blondie", calories: 300, estimated: false, slot: MealSlot.Snack));
+        var blanked = await journal.UpdateAsync(entry.Id, Draft(food: "Blondie", calories: null, estimated: false));
+
+        Assert.NotNull(givenAt);
+        Assert.Equal((false, givenAt), (moved.Remembered, moved.Entry!.CaloriesGivenAt));
+        Assert.Equal((false, (DateTimeOffset?)null), (blanked.Remembered, blanked.Entry!.CaloriesGivenAt));
+    }
+
+    [Fact]
+    public async Task Undoing_the_removal_of_an_old_number_does_not_make_it_the_remembered_one()
+    {
+        var journal = As(Jordan);
+        var old = (await journal.LogAsync(Draft(food: "Blondie", calories: 300, estimated: false, on: Today.AddDays(-14)))).Entry!;
+        await journal.LogAsync(Draft(food: "Blondie", calories: 600, estimated: false, on: Today.AddDays(-1)));
+        await journal.DeleteAsync(old.Id);
+
+        await journal.RestoreAsync(old);
+
+        Assert.Equal([new RememberedCalories("Blondie", 600)], await journal.RememberedAsync());
+    }
+
+    [Fact]
+    public async Task A_typed_number_is_remembered_and_a_recalled_one_is_not_newly_given()
+    {
+        var journal = As(Jordan);
+
+        var typed = await journal.LogAsync(Draft(food: "Latte", calories: 300, estimated: false));
+        var recalled = await journal.LogAsync(Draft(food: "Latte", calories: null, estimated: false));
+
+        Assert.Equal((true, false), (typed.Remembered, typed.Recalled));
+        Assert.Equal((false, true), (recalled.Remembered, recalled.Recalled));
+    }
+
+    [Fact]
+    public async Task A_recalled_number_is_held_to_the_write_rule_too()
+    {
+        // A stored number that breaks today's rule (written before a bound was tightened, say) must not be
+        // copied onto every later log of the food.
+        await using (var db = _db.CreateDbContext())
+        {
+            db.JournalEntries.Add(new JournalEntry
+            {
+                Food = "Feast", Calories = MealJournal.MaxCalories + 1, EatenOn = Today.AddDays(-1),
+                LoggedAt = DateTimeOffset.Now, CaloriesGivenAt = DateTimeOffset.Now,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var write = await As(Jordan).LogAsync(Draft(food: "Feast", calories: 900));
+
+        Assert.Null(write.Entry);
+        Assert.Contains("more than one entry can hold", write.Problem);
     }
 
     [Fact]
