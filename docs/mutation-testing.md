@@ -90,13 +90,18 @@ report keeps the baseline's compile errors Core-wide (~590 of them, in files nob
 Ignores out-of-diff mutants but leaves those as CompileError. So zero testable is also exactly what a
 PR looks like when its Core change produces no mutants at all, such as a new enum member or an
 interface signature change. PRs #91 and #93 were both held red on that and nothing else. A
-zero-testable run now still fails in each shape of the real hole:
-- the Core tests changed, yet nothing was re-tested;
-- a changed Core file matches no single report entry, so the report never provably read it;
-- a changed Core file has CompileError mutants (the WaveAudio shape).
+zero-testable run now passes on exactly one proof: every path the scope step listed is a Core `.cs`
+file that appears in the report exactly once with **zero mutants of any status**. Anything else still
+fails:
+- a changed Core test;
+- a `.csproj` or other non-C# file;
+- a deleted file;
+- a file the report doesn't hold exactly once;
+- a file with any mutants at all, whether CompileError (the WaveAudio shape) or Ignored (a disable
+  comment, or a file the diff missed).
 
-Otherwise it passes, with a notice naming the files it read. Each branch was checked against a real
-report with a probe commit.
+The scope step writes that one list of changed paths, and the guard reads it rather than asking git
+again with its own pathspec. Each failure shape was checked with a probe commit against a real report.
 
 ## Scope-tuning outcome (2026-08-25): nothing honest to exclude
 
