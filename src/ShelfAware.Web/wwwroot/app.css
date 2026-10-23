@@ -289,6 +289,24 @@ body {
     box-shadow: inset 3px 0 0 var(--accent);
 }
 
+/* A section of the rail: its pages under a small heading. The heading is decoration for sighted
+   readers; the group carries the same name for assistive tech (aria-label in MainLayout). */
+.nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    margin-top: 0.4rem;
+}
+
+.nav-group-label {
+    padding: 0 0.6rem 0.15rem;
+    color: var(--ink-soft);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
 /* A menu section's pages, as a tab strip across the top of the content column (SectionTabs.razor).
    Wraps rather than scrolling on a narrow phone: a sideways-scrolling strip hides its last tab with no
    sign that it's there, and its overflow clipping would cut the focus ring. The active tab gets the

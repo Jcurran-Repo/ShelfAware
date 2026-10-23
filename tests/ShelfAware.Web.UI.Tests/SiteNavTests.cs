@@ -38,6 +38,9 @@ public class SiteNavTests : BunitContext
 
     [Theory]
     [InlineData("/", "Dashboard")]
+    [InlineData("/list", "Meals")]
+    [InlineData("/meal-plan", "Meals")]
+    [InlineData("/journal", "Meals")]
     [InlineData("/receipt", "Receipts")]
     [InlineData("/receipts", "Receipts")]
     [InlineData("/pantry-photo", "Receipts")]
@@ -108,7 +111,7 @@ public class SiteNavTests : BunitContext
             new[] { "Trends", "Reports", "Accuracy" },
             cut.FindAll(".section-tabs a").Select(a => a.TextContent.Trim())));
 
-        nav.NavigateTo("/list");
+        nav.NavigateTo("/settings");
         cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".section-tabs")));
     }
 
@@ -123,25 +126,22 @@ public class SiteNavTests : BunitContext
     }
 
     [Fact]
-    public void A_section_link_stays_lit_on_every_page_of_the_section()
+    public void A_page_link_is_lit_only_on_its_own_page()
     {
         var nav = Services.GetRequiredService<NavigationManager>();
-        var receipts = SiteNav.Sections.Single(s => s.Label == "Receipts");
-        nav.NavigateTo("/pantry-photo");
+        var cookbook = SiteNav.Pages.Single(p => p.Href == "/cookbook");
+        nav.NavigateTo("/cookbook/import");
 
-        var cut = Render<SiteNavLink>(p => p.Add(l => l.Page, receipts.Home).Add(l => l.Section, receipts));
+        var cut = Render<SiteNavLink>(p => p.Add(l => l.Page, cookbook));
 
         var link = cut.Find("a");
-        Assert.Equal("/receipts", link.GetAttribute("href"));
-        Assert.Equal("Receipts", link.TextContent.Trim());
+        Assert.Equal("/cookbook", link.GetAttribute("href"));
+        Assert.Equal("Cookbook", link.TextContent.Trim());
         Assert.Contains("active", link.ClassList);
-        // Lit, but it points at a different page than this one: a location, not the current page.
-        Assert.Equal("true", link.GetAttribute("aria-current"));
+        Assert.Equal("page", link.GetAttribute("aria-current"));
 
-        nav.NavigateTo("/receipts");
-        cut.WaitForAssertion(() => Assert.Equal("page", cut.Find("a").GetAttribute("aria-current")));
-
-        nav.NavigateTo("/products");
+        // Its neighbour in the same section is NOT this page: the link goes dark.
+        nav.NavigateTo("/recipes");
         cut.WaitForAssertion(() =>
         {
             Assert.DoesNotContain("active", cut.Find("a").ClassList);

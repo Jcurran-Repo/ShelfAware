@@ -1,24 +1,17 @@
 @implements IDisposable
 @inject NavigationManager Nav
 
-@* A menu link that knows where the visitor is, by SiteNav's one rule. Given a Section (the rail), it
-   stays lit on every page of that section; given only a Page (a tab), it lights on that page. Not a
-   NavLink, because NavLink can only say aria-current="page": the rail's "Recipes" link stays lit on
-   the Cookbook tab while pointing somewhere else, and that is a location ("true"), not this page. *@
-<a href="@Page.Href" class="@(Active ? "active" : null)" aria-current="@AriaCurrent">@(Section?.Label ?? Page.Label)</a>
+@* A link to one SiteNav page, lit while the visitor is on it. The rail and the section tab strip both
+   use it, and it asks SiteNav.IsAt, the same rule SectionTabs uses to pick its section, so the rail,
+   the tabs and the strip itself always agree on where the visitor is. *@
+<a href="@Page.Href" class="@(Active ? "active" : null)" aria-current="@(Active ? "page" : null)">@Page.Label</a>
 
 @code {
-    /// <summary>Where the link goes.</summary>
     [Parameter, EditorRequired] public SiteNav.Page Page { get; set; } = default!;
-
-    /// <summary>The section the link stands for, when it is a rail link; null for a tab.</summary>
-    [Parameter] public SiteNav.Section? Section { get; set; }
 
     private string path = "/";
 
-    private bool Active => Section?.Contains(path) ?? SiteNav.IsAt(Page, path);
-
-    private string? AriaCurrent => SiteNav.IsAt(Page, path) ? "page" : Active ? "true" : null;
+    private bool Active => SiteNav.IsAt(Page, path);
 
     protected override void OnInitialized()
     {
@@ -30,9 +23,9 @@
     // the discarded task only carries the hop onto the renderer's thread.
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
-        var before = AriaCurrent;
+        var before = Active;
         path = SiteNav.PathOf(Nav, e.Location);
-        if (AriaCurrent != before) _ = InvokeAsync(StateHasChanged);
+        if (Active != before) _ = InvokeAsync(StateHasChanged);
     }
 
     public void Dispose() => Nav.LocationChanged -= OnLocationChanged;

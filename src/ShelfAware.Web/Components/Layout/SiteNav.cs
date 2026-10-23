@@ -2,21 +2,18 @@ using Microsoft.AspNetCore.Components;
 
 namespace ShelfAware.Web.Components.Layout;
 
-/// <summary>THE list of the app's top-level pages, grouped into the menu's sections. The rail renders
-/// one link per section, a section with more than one page renders its pages as a tab strip
-/// (<see cref="SectionTabs"/>), and the bug-report form's "where" dropdown is built from the same
-/// pages — so a page added here appears in all three and they can never drift. That's the
-/// one-accessible-definition rule, applied to navigation. Order is the rail's reading order, and a
-/// section's first page is where its menu link lands.</summary>
+/// <summary>THE list of the app's top-level pages, grouped into the menu's sections. The rail lists
+/// every page under its section's heading, a section with more than one page also shows its pages as
+/// a tab strip across the top of each of them (<see cref="SectionTabs"/>), and the bug-report form's
+/// "where" dropdown is built from the same pages — so a page added here appears in all three and they
+/// can never drift. That's the one-accessible-definition rule, applied to navigation. Order is the
+/// rail's reading order.</summary>
 public static class SiteNav
 {
     public sealed record Page(string Label, string Href);
 
     public sealed record Section(string Label, IReadOnlyList<Page> Pages)
     {
-        /// <summary>Where the section's menu link goes: its first page.</summary>
-        public Page Home => Pages[0];
-
         /// <summary>Whether the visitor is on any of this section's pages.</summary>
         public bool Contains(string path) => Pages.Any(p => IsAt(p, path));
     }
@@ -24,10 +21,8 @@ public static class SiteNav
     public static readonly IReadOnlyList<Section> Sections =
     [
         new("Dashboard", [new("Dashboard", "/")]),
-        new("Grocery List", [new("Grocery List", "/list")]),
+        new("Meals", [new("Grocery List", "/list"), new("Meal Plan", "/meal-plan"), new("Journal", "/journal")]),
         new("Recipes", [new("Recipes", "/recipes"), new("Cookbook", "/cookbook")]),
-        new("Meal Plan", [new("Meal Plan", "/meal-plan")]),
-        new("Journal", [new("Journal", "/journal")]),
         new("Receipts", [new("Receipts", "/receipts"), new("Upload", "/receipt"), new("Count Stock", "/pantry-photo")]),
         new("Products", [new("Products", "/products"), new("History", "/history")]),
         new("Insights", [new("Trends", "/trends"), new("Reports", "/reports"), new("Accuracy", "/accuracy")]),
