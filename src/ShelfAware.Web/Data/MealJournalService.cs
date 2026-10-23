@@ -28,8 +28,10 @@ public sealed class MealJournalService(IHouseholdDbFactory dbFactory) : IMealJou
         if (db.MemberId is null) return JournalWrite.Refused(NobodySignedIn);
 
         var (written, recalled) = MealJournal.Recall(draft, await RememberedAsync(db, cancellationToken));
-        var given = MealJournal.GivesNumber(before: null, written);
-        return await AddAsync(db, written, given ? DateTimeOffset.Now : null, recalled, remembered: given && !recalled,
+        // A recalled number was given before, not now: it carries no stamp, so it can never outrank the
+        // correction it came from, nor rename the food that correction is remembered by.
+        var given = !recalled && MealJournal.GivesNumber(before: null, written);
+        return await AddAsync(db, written, given ? DateTimeOffset.Now : null, recalled, remembered: given,
             cancellationToken);
     }
 

@@ -231,6 +231,7 @@ public class MealJournalServiceTests : IDisposable
 
         Assert.Equal((true, false), (typed.Remembered, typed.Recalled));
         Assert.Equal((false, true), (recalled.Remembered, recalled.Recalled));
+        Assert.Null(recalled.Entry!.CaloriesGivenAt); // given before, not now — it can't outrank its source
     }
 
     [Fact]
