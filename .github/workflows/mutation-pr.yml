@@ -107,8 +107,31 @@ jobs:
           tested=$(jq '[.files[]?.mutants[]? | select(.status != "CompileError" and .status != "Ignored")] | length' "$report")
           echo "Mutants in the report: $total; testable (a status other than CompileError/Ignored): $tested"
           if [ "$tested" -eq 0 ]; then
-            echo "::error::ZERO testable mutants. This PR changed Core, Stryker exited 0, and every mutant it generated ($total) was CompileError or Ignored — so the 100% this check would otherwise report is a score over nothing (Stryker logs 'unable to calculate a mutation score' for this and still exits 0). Make the mutants compile — a constant-folded argument that Stryker rewrites into a ternary is the known cause (docs/mutation-testing.md § 'Known limitation') — or, if the change genuinely has nothing to mutate, say so on the PR so a reviewer can agree."
-            exit 1
+            # Zero testable means one of two things, and only one is the hole. A diff-scoped report keeps the
+            # baseline's compile errors Core-wide (~590, in files nobody touched): --since Ignores out-of-diff
+            # mutants but leaves those as CompileError. So "every mutant was CompileError or Ignored" is ALSO
+            # what a PR looks like whose Core change produces no mutants at all — a new enum member, an
+            # interface signature (#91 and #93, both held red on nothing). The hole is narrower, and each
+            # shape of it still fails here: the Core tests changed and nothing ran; a changed Core file the
+            # report never read (or whose path we can't match to exactly one report key — unproven is not
+            # read); or a changed Core file whose mutants failed to compile (WaveAudio.cs).
+            fail() { echo "::error::ZERO testable mutants, and $1 — so the 100% this check would otherwise report is a score over nothing (Stryker logs 'unable to calculate a mutation score' for this and still exits 0). See docs/mutation-testing.md § 'Known limitation'."; exit 1; }
+            if ! changed_tests="$(git diff --name-only "$BASE_SHA" HEAD -- tests/ShelfAware.Tests/)" \
+              || ! changed_src="$(git diff --name-only --diff-filter=d "$BASE_SHA" HEAD -- 'src/ShelfAware.Core/*.cs')"; then
+              echo "::error::Could not diff against base $BASE_SHA — refusing to judge what this run tested."
+              exit 1
+            fi
+            [ -z "$changed_tests" ] || fail "this PR changed the Core tests ($(echo $changed_tests)), so something should have been re-tested"
+            changed_json="$(printf '%s\n' "$changed_src" | jq -R 'select(length > 0)' | jq -s .)"
+            unread=$(jq -r --argjson changed "$changed_json" '[.files | keys[]] as $keys
+              | $changed[] | select(. as $c | [$keys[] | select(endswith("/" + $c))] | length != 1)' "$report")
+            [ -z "$unread" ] || fail "the report never read these changed Core files (no single matching entry): $(echo $unread)"
+            uncompiled=$(jq --argjson changed "$changed_json" '[.files | to_entries[]
+              | select(.key as $k | any($changed[]; . as $c | $k | endswith("/" + $c)))
+              | .value.mutants[]? | select(.status == "CompileError")] | length' "$report")
+            echo "CompileError mutants in the Core files this PR changed: $uncompiled"
+            [ "$uncompiled" -eq 0 ] || fail "$uncompiled of them sit in Core files this PR changed and failed to compile. Make them compile — a constant-folded argument that Stryker rewrites into a ternary is the known cause"
+            echo "::notice::This PR's Core changes produce no mutants — the report read every changed Core file ($(echo $changed_src)) and found nothing to mutate and nothing that failed to compile."
           fi
 
       # On a survivor, turn Stryker's "exit code 2" into an instant, clear answer ON the PR: an inline
