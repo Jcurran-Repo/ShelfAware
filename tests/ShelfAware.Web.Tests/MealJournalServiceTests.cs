@@ -269,6 +269,21 @@ public class MealJournalServiceTests : IDisposable
         Assert.Empty(await As(member: null).RememberedAsync());
     }
 
+    [Fact]
+    public async Task An_estimate_pricing_a_bigger_size_below_a_smaller_one_is_refused()
+    {
+        // The report that started this: 32 oz came back lower than the 16 oz estimate.
+        var journal = As(Jordan);
+        await journal.LogAsync(Draft(food: "7 Brew chiller, 16 oz", calories: 450, on: Today.AddDays(-1)));
+
+        var lower = await journal.LogAsync(Draft(food: "7 Brew chiller, large 32 oz", calories: 400));
+        var theirs = await journal.LogAsync(Draft(food: "7 Brew chiller, large 32 oz", calories: 400, estimated: false));
+
+        Assert.Null(lower.Entry);
+        Assert.StartsWith("Not logged: 400 calories for 7 Brew chiller, large 32 oz is less than the 450", lower.Problem);
+        Assert.Null(theirs.Problem); // a number the person gave is theirs to give
+    }
+
     // --- privacy --------------------------------------------------------------------------------
 
     [Fact]

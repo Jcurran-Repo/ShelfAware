@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Linq.Expressions;
+using System.Text.RegularExpressions;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.MealPlanning;
 
@@ -207,14 +208,83 @@ public static class MealJournal
             .Select(e => new RememberedCalories(Flatten(e.Food), e.Calories!.Value)),
     ];
 
+    /// <summary>The food with the portion the person said folded into its name, unless the name already says
+    /// it — so the size is part of what <see cref="FoodKey"/> compares and the journal remembers by.</summary>
+    public static string WithPortion(string food, string? portion)
+    {
+        if (string.IsNullOrWhiteSpace(portion)) return food;
+        return FoodKey(food).Contains(FoodKey(portion), StringComparison.Ordinal)
+            ? food
+            : $"{food.Trim()}, {Flatten(portion)}";
+    }
+
+    private const string OuncesText = @"(\d+(?:\.\d+)?)\s*(?:fl\.?\s*)?(?:oz|ounces?)\b";
+
+    private static readonly Regex OuncesPattern = new(OuncesText, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>Everything that says a size rather than a food — an ounce count, a size word — plus the commas
+    /// that separate them from the name, each replaced by a space so the words either side stay apart.</summary>
+    private static readonly Regex SizeNoise = new(
+        OuncesText + @"|\b(?:small|medium|large|regular|kids?|tall|grande|venti|extra|xl)\b|,",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>The size a food's name states in ounces ("…, large 32 oz" → 32), or null when it states none.</summary>
+    public static decimal? Ounces(string food) =>
+        OuncesPattern.Match(food) is { Success: true } m
+            ? decimal.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)
+            : null;
+
+    /// <summary>The food with its size taken out — what two sizes of the same drink share
+    /// ("7 Brew chiller, large 32 oz" and "7 brew chiller 16 oz" are both "7 brew chiller").</summary>
+    public static string SizelessKey(string food) => FoodKey(SizeNoise.Replace(food, " "));
+
+    /// <summary>An already-logged size of the same food that makes <paramref name="draft"/>'s estimate
+    /// impossible — a bigger cup priced lower than a smaller one, or a smaller cup priced higher — or null.
+    /// Only an estimate is checked: a number the person gave is theirs to give. Compared by ounces, so only
+    /// names that state them; the most recently logged conflicting entry is the one returned.</summary>
+    public static JournalEntry? SizeConflict(JournalDraft draft, IEnumerable<JournalEntry> history)
+    {
+        if (draft.IsOwnNumber || draft.Calories is not { } kcal || Ounces(draft.Food) is not { } oz) return null;
+        var key = SizelessKey(draft.Food);
+        return history
+            .Where(e => e.Calories is not null && Ounces(e.Food) is { } other && other != oz && SizelessKey(e.Food) == key)
+            .OrderByDescending(e => e.Id)
+            .FirstOrDefault(Impossible);
+
+        bool Impossible(JournalEntry e)
+        {
+            // Stryker disable once Equality: equal sizes are filtered out above, so > and >= agree here.
+            return Ounces(e.Food) > oz ? e.Calories < kcal : e.Calories > kcal;
+        }
+    }
+
+    /// <summary>What a write that <see cref="SizeConflict"/> refused says — to the model, which estimated it, so
+    /// it names both numbers and asks for a new estimate rather than a retry of the same one.</summary>
+    public static string SizeConflictProblem(JournalDraft draft, JournalEntry other)
+    {
+        // Stryker disable once Equality: SizeConflict never pairs equal sizes, so > and >= agree here.
+        var bigger = Ounces(draft.Food) > Ounces(other.Food);
+        return $"Not logged: {Number(draft.Calories!.Value)} calories for {draft.Food} is {(bigger ? "less" : "more")} than the "
+            + $"{Number(other.Calories!.Value)} already logged for {other.Food} — a {(bigger ? "bigger" : "smaller")} size can't have "
+            + $"{(bigger ? "fewer" : "more")} calories. Re-estimate it for its size and call log_meal again.";
+    }
+
+    /// <summary>The person's remembered number for <paramref name="food"/> (<see cref="FoodKey"/> match), or
+    /// null when they've never given one — what <see cref="Recall"/> applies, and what tells Reginald he
+    /// needn't ask the portion of a food the person has already priced.</summary>
+    public static RememberedCalories? Find(string food, IEnumerable<RememberedCalories> remembered)
+    {
+        var key = FoodKey(food);
+        return remembered.FirstOrDefault(r => FoodKey(r.Food) == key);
+    }
+
     /// <summary>THE override rule: a draft that carries the person's own number is written as it is; any other
     /// — an estimate, a saved recipe's figure, or no number at all — gives way to the number the person last
     /// gave for that same food. The recalled number is theirs, so it is not marked an estimate.</summary>
     public static (JournalDraft Draft, bool Recalled) Recall(JournalDraft draft, IEnumerable<RememberedCalories> remembered)
     {
         if (draft.IsOwnNumber) return (draft, false);
-        var key = FoodKey(draft.Food);
-        return remembered.FirstOrDefault(r => FoodKey(r.Food) == key) is { } hit
+        return Find(draft.Food, remembered) is { } hit
             ? (draft with { Calories = hit.Calories, CaloriesEstimated = false }, true)
             : (draft, false);
     }
