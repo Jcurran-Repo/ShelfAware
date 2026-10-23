@@ -2,7 +2,6 @@ using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Billing;
 
@@ -52,14 +51,14 @@ public class AnthropicRecipeImporter : IRecipeImporter
     private static readonly string TextPrompt = ReadEmbedded("Prompts.recipe-import-text-system.txt");
 
     private readonly IChatClient _chat;
-    private readonly LlmOptions _options;
+    private readonly IAiModelChoice _models;
     private readonly ILogger<AnthropicRecipeImporter> _logger;
 
     public AnthropicRecipeImporter(
-        IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicRecipeImporter> logger)
+        IChatClient chat, IAiModelChoice models, ILogger<AnthropicRecipeImporter> logger)
     {
         _chat = chat;
-        _options = options.Value;
+        _models = models;
         _logger = logger;
     }
 
@@ -70,14 +69,14 @@ public class AnthropicRecipeImporter : IRecipeImporter
             new DataContent(image.Data, image.MediaType),
             new TextContent("Extract the recipe in this image."),
         };
-        return ExtractAsync(ImagePrompt, content, _options.ExtractionModel, cancellationToken);
+        return ExtractAsync(ImagePrompt, content, _models.ExtractionModel, cancellationToken);
     }
 
     public Task<RecipeImportResult> ImportFromTextAsync(string text, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(text)) return Task.FromResult(RecipeImportResult.Fail("Paste a recipe first."));
         var content = new List<AIContent> { new TextContent($"Structure this recipe text:\n\n{text}") };
-        return ExtractAsync(TextPrompt, content, _options.ChatModel, cancellationToken);
+        return ExtractAsync(TextPrompt, content, _models.ChatModel, cancellationToken);
     }
 
     private async Task<RecipeImportResult> ExtractAsync(

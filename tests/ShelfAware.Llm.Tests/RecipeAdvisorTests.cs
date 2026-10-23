@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Llm;
 
@@ -12,7 +11,7 @@ namespace ShelfAware.Llm.Tests;
 public class RecipeAdvisorTests
 {
     private static AnthropicRecipeAdvisor Advisor(FakeChatClient chat) =>
-        new(chat, Options.Create(new LlmOptions()), NullLogger<AnthropicRecipeAdvisor>.Instance);
+        new(chat, new LlmOptions(), NullLogger<AnthropicRecipeAdvisor>.Instance);
 
     [Fact]
     public async Task Parses_steps_ingredients_and_grounded_matches()

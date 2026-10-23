@@ -1,6 +1,5 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.MealPlanning;
 using ShelfAware.Llm;
@@ -16,7 +15,7 @@ namespace ShelfAware.Llm.Tests;
 public class MealPlanGeneratorTests
 {
     private static AnthropicMealPlanGenerator Generator(FakeChatClient chat) =>
-        new(chat, Options.Create(new LlmOptions()), NullLogger<AnthropicMealPlanGenerator>.Instance);
+        new(chat, new LlmOptions(), NullLogger<AnthropicMealPlanGenerator>.Instance);
 
     private const string TwoMeals = """
     { "recipes": [

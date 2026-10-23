@@ -2,7 +2,6 @@ using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.MealPlanning;
 using ShelfAware.Core.Recipes;
 
@@ -19,13 +18,13 @@ public class AnthropicMealPlanGenerator : IMealPlanGenerator
     private static readonly string SystemPrompt = ReadEmbedded("Prompts.meal-plan-system.txt");
 
     private readonly IChatClient _chat;
-    private readonly LlmOptions _options;
+    private readonly IAiModelChoice _models;
     private readonly ILogger<AnthropicMealPlanGenerator> _logger;
 
-    public AnthropicMealPlanGenerator(IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicMealPlanGenerator> logger)
+    public AnthropicMealPlanGenerator(IChatClient chat, IAiModelChoice models, ILogger<AnthropicMealPlanGenerator> logger)
     {
         _chat = chat;
-        _options = options.Value;
+        _models = models;
         _logger = logger;
     }
 
@@ -45,7 +44,7 @@ public class AnthropicMealPlanGenerator : IMealPlanGenerator
         };
         var options = new ChatOptions
         {
-            ModelId = _options.ChatModel,
+            ModelId = _models.ChatModel,
             MaxOutputTokens = 8192, // a batch of full recipes (name/blurb/ingredients/steps) per call
             ResponseFormat = ChatResponseFormat.ForJsonSchema(RecipeJson.Schema(), schemaName: "meal_plan"),
         };

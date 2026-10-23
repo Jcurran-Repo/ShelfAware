@@ -1,6 +1,5 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Census;
 using ShelfAware.Core.Domain;
 
@@ -14,7 +13,7 @@ namespace ShelfAware.Llm.Tests;
 public class ShelfCensusReaderTests
 {
     private static AnthropicShelfCensusReader Reader(FakeChatClient client) =>
-        new(client, Options.Create(new LlmOptions()), NullLogger<AnthropicShelfCensusReader>.Instance);
+        new(client, new LlmOptions(), NullLogger<AnthropicShelfCensusReader>.Instance);
 
     private static readonly IReadOnlyList<ShelfPhoto> OnePhoto = [new([1, 2, 3], "image/jpeg")];
 

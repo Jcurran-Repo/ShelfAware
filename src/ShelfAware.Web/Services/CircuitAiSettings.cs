@@ -7,9 +7,10 @@ namespace ShelfAware.Web.Services;
 /// Per-circuit AI configuration. Defaults to the server config (<see cref="LlmOptions"/>) so local dev and
 /// a self-hosted owner keep working with a user-secrets key; a visitor's browser-held settings override it
 /// for their circuit (BYOK) via <see cref="Apply"/>. Scoped = one instance per Blazor circuit, so two
-/// concurrent visitors never share a key.
+/// concurrent visitors never share a key. It is also this circuit's <see cref="IAiModelChoice"/>, so the model
+/// a BYOK visitor picks is the model every AI service names on its calls, not only the one the client is bound to.
 /// </summary>
-public sealed class CircuitAiSettings
+public sealed class CircuitAiSettings : IAiModelChoice
 {
     private readonly AiProvider _fallbackProvider;
     private readonly string _fallbackKey;

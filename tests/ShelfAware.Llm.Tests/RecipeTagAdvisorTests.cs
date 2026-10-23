@@ -9,7 +9,7 @@ namespace ShelfAware.Llm.Tests;
 public class RecipeTagAdvisorTests
 {
     private static AnthropicRecipeTagAdvisor Advisor(FakeChatClient chat) =>
-        new(chat, Options.Create(new LlmOptions()), NullLogger<AnthropicRecipeTagAdvisor>.Instance);
+        new(chat, new LlmOptions(), NullLogger<AnthropicRecipeTagAdvisor>.Instance);
 
     private static readonly string[] NoIngredients = [];
     private static readonly string[] NoKnown = [];

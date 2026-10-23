@@ -4,7 +4,6 @@ using System.Text.Json;
 using Anthropic.Models.Messages;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Journal;
@@ -41,7 +40,7 @@ public class AnthropicPantryChat : IPantryChat
     private static readonly string SystemPrompt = ReadEmbedded("Prompts.pantry-chat-system.txt");
 
     private readonly IChatClient _chat;
-    private readonly LlmOptions _options;
+    private readonly IAiModelChoice _models;
     private readonly IPantryStore _store;
     private readonly IProductSubstituteAdvisor? _substituteAdvisor;
     private readonly IRecipeAdapter? _recipeAdapter;
@@ -51,13 +50,13 @@ public class AnthropicPantryChat : IPantryChat
     private readonly ILogger<AnthropicPantryChat> _logger;
 
     public AnthropicPantryChat(
-        IChatClient chat, IOptions<LlmOptions> options, IPantryStore store, ILogger<AnthropicPantryChat> logger,
+        IChatClient chat, IAiModelChoice models, IPantryStore store, ILogger<AnthropicPantryChat> logger,
         IProductSubstituteAdvisor? substituteAdvisor = null,
         IRecipeAdapter? recipeAdapter = null, IRecipeAdvisor? recipeAdvisor = null, IAppSettings? settings = null,
         IMealJournal? journal = null)
     {
         _chat = chat;
-        _options = options.Value;
+        _models = models;
         _store = store;
         _substituteAdvisor = substituteAdvisor;
         _recipeAdapter = recipeAdapter;
@@ -105,7 +104,7 @@ public class AnthropicPantryChat : IPantryChat
 
         var chatOptions = new ChatOptions
         {
-            ModelId = _options.ChatModel,
+            ModelId = _models.ChatModel,
             MaxOutputTokens = 1024,
             Tools = BuildTools(cookAlong, journal: _journal is not null),
         };
