@@ -79,6 +79,40 @@ public sealed class CircuitAiSettings : IAiModelChoice
         Changed?.Invoke();
     }
 
+    /// <summary>The visitor's own settings, captured for work that runs in a DI scope of its own after this
+    /// circuit's — the detached meal-plan job. A fresh scope builds a fresh <see cref="CircuitAiSettings"/>
+    /// from server config alone, so without this a BYOK household's plan runs with no key (the box's), or on
+    /// the server's model rather than the one they picked. Null when nothing came from the browser: the
+    /// fresh scope's own defaults are then already right.</summary>
+    public Carried? Carry() => FromBrowser ? new Carried(Provider, ApiKey, ExtractionModel, ChatModel, BaseUrl) : null;
+
+    /// <summary>Apply settings another circuit's <see cref="Carry"/> captured. Goes through the same
+    /// <see cref="Apply(AiProvider, string, string?, string?, string?)"/> as the browser, so the managed
+    /// no-op and the base-URL guard hold for a carried copy exactly as they do for the original.</summary>
+    public void Apply(Carried carried) =>
+        Apply(carried.Provider, carried.ApiKey, carried.ExtractionModel, carried.ChatModel, carried.BaseUrl);
+
+    /// <summary>What <see cref="Carry"/> captures. ⚠️ A class rather than a record on purpose: a record's
+    /// generated <c>ToString</c> prints every member, and this one holds the visitor's API key — one log line
+    /// or exception message that formatted it would write the key to disk.</summary>
+    public sealed class Carried
+    {
+        internal Carried(AiProvider provider, string apiKey, string extractionModel, string chatModel, string? baseUrl)
+        {
+            Provider = provider;
+            ApiKey = apiKey;
+            ExtractionModel = extractionModel;
+            ChatModel = chatModel;
+            BaseUrl = baseUrl;
+        }
+
+        internal AiProvider Provider { get; }
+        internal string ApiKey { get; }
+        internal string ExtractionModel { get; }
+        internal string ChatModel { get; }
+        internal string? BaseUrl { get; }
+    }
+
     /// <summary>Revert to the server-config fallback — used when the visitor forgets their key. On a public
     /// deploy that's an empty key (AI off until they re-enter one); in local dev it's the owner key again.</summary>
     public void Reset()

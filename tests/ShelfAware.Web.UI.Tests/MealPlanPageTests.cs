@@ -266,7 +266,7 @@ public class MealPlanPageTests : PageTestContext
         public MealPlanJobSnapshot? Snapshot { get; set; }
         // Starting a fresh job makes it "running" (unless a test pre-scripted a Done/Failed result to be
         // picked up), mirroring the real runner where Start → the job is now in flight.
-        public void Start(string householdId)
+        public void Start(string householdId, CircuitAiSettings.Carried? ai)
         {
             Started.Add(householdId);
             Snapshot ??= new MealPlanJobSnapshot(MealPlanJobState.Running, 0, 3, 0, null);

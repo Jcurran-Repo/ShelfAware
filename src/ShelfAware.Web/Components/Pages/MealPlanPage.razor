@@ -513,7 +513,7 @@ else if (!generating)
         generating = true;
         progressDone = 0;
         progressTotal = 0;
-        Jobs.Start(householdId);
+        Jobs.Start(householdId, AiSettings.Carry());
         StartPolling();
     }
 
