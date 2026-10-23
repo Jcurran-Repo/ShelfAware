@@ -95,11 +95,11 @@ jobs:
       # calculate a mutation score", wrote a report with nothing testable in it, and reported no failure,
       # because a score over zero mutants is undefined rather than low. Found 2026-09-19 on WaveAudio.cs
       # (34 mutants, 34 CompileError, check green — docs/backlog.md). A gate that said yes to a file it had
-      # not read is the hole; this is the floor under it. CompileError and Ignored are the two statuses
-      # that mean "could not be tested"; every other status means a test was run against the mutant.
+      # not read is the hole; this step refuses it file by file. CompileError and Ignored are the two
+      # statuses that mean "could not be tested"; every other status means a test was run against the mutant.
       # Runs only when the Stryker step succeeded (the implicit success() of a plain `if:`), which is
       # exactly the case the hole lives in — a red Stryker step already has the job.
-      - name: Refuse a green run that tested nothing
+      - name: Refuse a green run on a changed file nothing tested
         if: steps.scope.outputs.core == 'true'
         env:
           CHANGES: ${{ steps.scope.outputs.changes }}
@@ -109,8 +109,11 @@ jobs:
             echo "::error::Stryker exited 0 but wrote no JSON report, so this gate cannot say what it tested. Refusing to pass a Core change on nothing — see docs/mutation-testing.md § 'Known limitation'."
             exit 1
           fi
+          # THE one reading of "a test ran against this mutant", shared by the report-wide count and the
+          # per-file proof below so the two can never disagree about a status.
+          is_tested='def tested: .status != "CompileError" and .status != "Ignored";'
           total=$(jq '[.files[]?.mutants[]?] | length' "$report")
-          tested=$(jq '[.files[]?.mutants[]? | select(.status != "CompileError" and .status != "Ignored")] | length' "$report")
+          tested=$(jq "$is_tested"' [.files[]?.mutants[]? | select(tested)] | length' "$report")
           echo "Mutants in the report: $total; testable (a status other than CompileError/Ignored): $tested"
           # The hole is per FILE, so the proof is too — on every run, not only when the whole report tested
           # nothing. A score is pooled across files: one changed file with killed mutants carries the run to
@@ -125,32 +128,36 @@ jobs:
           # testable mutants report-wide, nothing re-ran against them, so they fail as before.
           # Fail-closed at both ends: an empty list (unreachable while core=true means a non-empty file, but
           # an empty loop would otherwise pass) and an entry with no mutants ARRAY (a truncated or reshaped
-          # report must not read as "zero mutants") are unproven, not proof. If a PR genuinely trips this
-          # with nothing to test, say so on the PR so a reviewer can agree.
+          # report must not read as "zero mutants") are unproven, not proof. So is a path git C-quoted (a
+          # quote, backslash or control character in the name, which core.quotePath=false still quotes): it
+          # can't be matched to a file or a report key, so it fails rather than falling through as "not
+          # Core". Each reason carries its own fix. If a PR genuinely trips this with nothing to test, say so
+          # on the PR so a reviewer can agree.
           present="$RUNNER_TEMP/core-present.txt"
           while IFS= read -r path; do
             if [ -f "$path" ]; then printf '%s\n' "$path"; fi
           done < "$CHANGES" > "$present"
-          unproven="$(jq -R -s -r --slurpfile report "$report" --rawfile present "$present" --argjson tested "$tested" '
+          unproven="$(jq -R -s -r --slurpfile report "$report" --rawfile present "$present" --argjson tested "$tested" "$is_tested"'
             ($report[0].files) as $files | [$files | keys[]] as $keys
             | ($present | split("\n") | map(select(length > 0))) as $here
             | split("\n") | map(select(length > 0)) as $changed
             | if ($changed | length) == 0 then "(no changed paths were recorded)" else
                 $changed[] | . as $c
-                | if (startswith("src/ShelfAware.Core/") and endswith(".cs")) and any($here[]; . == $c) then
+                | if startswith("\"") then "\($c): a path git quoted, which this guard cannot match — rename the file"
+                  elif (startswith("src/ShelfAware.Core/") and endswith(".cs")) and any($here[]; . == $c) then
                     [$keys[] | select(endswith("/" + $c))] as $m
-                    | if ($m | length) != 1 then "\($c): not in the report exactly once"
-                      elif ($files[$m[0]].mutants | type) != "array" then "\($c): report entry has no mutants list"
+                    | if ($m | length) != 1 then "\($c): in the report \($m | length) times, not once — check Stryker mutated this project"
+                      elif ($files[$m[0]].mutants | type) != "array" then "\($c): its report entry has no mutants list — the report is truncated or reshaped"
                       else $files[$m[0]].mutants as $ms
-                      | if ($ms | length) == 0 or any($ms[]; .status != "CompileError" and .status != "Ignored") then empty
-                        else "\($c): \($ms | length) mutants, none tested (\($ms | group_by(.status) | map("\(length) \(.[0].status)") | join(", ")))"
+                      | if ($ms | length) == 0 or any($ms[]; tested) then empty
+                        else "\($c): \($ms | length) mutants, none tested (\($ms | group_by(.status) | map("\(length) \(.[0].status)") | join(", "))) — \(if any($ms[]; .status == "CompileError") then "make them compile; a constant-folded argument Stryker rewrites into a ternary is the known cause (docs/mutation-testing.md § Known limitation)" else "Ignored means a disable comment or a diff Stryker did not map to this file" end)"
                         end
                       end
-                  elif $tested == 0 then "\($c): not a Core source file on disk, and no mutant was tested to cover it"
+                  elif $tested == 0 then "\($c): not a Core source file on disk, and the run tested no mutant at all, so nothing re-ran against it"
                   else empty end
               end' "$CHANGES")"
           if [ -n "$unproven" ]; then
-            echo "::error::These Core changes were not proven to be tested: $(printf '%s' "$unproven" | tr '\n' ';') — a file whose every mutant is CompileError or Ignored was never read by a test, and a pooled 100% (or Stryker's 'unable to calculate a mutation score', which still exits 0) says nothing about it. Make the mutants compile — a constant-folded argument that Stryker rewrites into a ternary is the known cause (docs/mutation-testing.md § 'Known limitation') — or, if the change genuinely has nothing to mutate, say so on the PR so a reviewer can agree."
+            echo "::error::These Core changes were not proven to be tested, so the score this check would otherwise report (pooled across files, or Stryker's 'unable to calculate a mutation score', which still exits 0) says nothing about them: $(printf '%s' "$unproven" | tr '\n' ';'). If a change genuinely has nothing to test, say so on the PR so a reviewer can agree."
             exit 1
           fi
           if [ "$tested" -eq 0 ]; then
