@@ -34,6 +34,10 @@ public class AnthropicPantryChat : IPantryChat
     /// wired and the declarations that define them cannot drift apart (the <see cref="GoToStep"/> lesson).</summary>
     private const string LogMeal = "log_meal";
     private const string QueryJournal = "query_journal";
+
+    /// <summary>How many of the person's remembered foods the prompt lists — the most recent, which are the
+    /// ones they are likeliest to have again; an older one still applies when the model names it exactly.</summary>
+    private const int MaxRememberedInPrompt = 40;
     private static readonly string SystemPrompt = ReadEmbedded("Prompts.pantry-chat-system.txt");
 
     private readonly IChatClient _chat;
@@ -85,7 +89,16 @@ public class AnthropicPantryChat : IPantryChat
         // The clock, for the journal only: "I just had a sandwich" with no meal named is lunch at 12:40
         // and a snack at 15:30, and a date alone can't tell those apart.
         if (_journal is not null)
+        {
             system += $"\n\nThe time now is {DateTime.Now.ToString("h:mm tt", CultureInfo.InvariantCulture)}.";
+            // The person's own numbers, by the names their journal already uses: the journal applies a
+            // remembered number itself, but only to the same food, so the model has to be able to name it.
+            var remembered = await _journal.RememberedAsync(cancellationToken);
+            if (remembered.Count > 0)
+                system += "\n\nFoods the user has given their own calorie number for (most recent first). When they eat one of these again, pass its food name exactly as written here — the journal then uses their number:\n"
+                    + string.Join("\n", remembered.Take(MaxRememberedInPrompt)
+                        .Select(r => $"- {r.Food}: {MealJournal.Number(r.Calories)} kcal"));
+        }
         // What the user is looking at right now, so on-screen references ("the second one") resolve.
         if (!string.IsNullOrWhiteSpace(screenContext))
             system += "\n\nOn screen right now:\n" + screenContext.Trim();
@@ -772,6 +785,11 @@ public class AnthropicPantryChat : IPantryChat
                         if (servings <= 0 || servings > 20) return ("servings must be more than 0 and at most 20.", true);
                         calories = (int)Math.Round(perServing * servings, MidpointRounding.AwayFromZero);
                         note = $" (from the saved {recipe.Name} recipe)";
+                        // The servings are part of WHICH food this is: a remembered number for one bowl must
+                        // not be recalled over three, so a count other than one goes into the name it is
+                        // remembered by.
+                        if (servings != 1m)
+                            food = $"{recipe.Name}, {servings.ToString("0.##", CultureInfo.InvariantCulture)} servings";
                     }
                 }
 
@@ -780,6 +798,8 @@ public class AnthropicPantryChat : IPantryChat
                 wrote.Mark();
                 actions.Add($"journal → {entry.Food}");
                 var kcal = MealJournal.Total([entry]).KcalOrUncounted;
+                // Their own number for this food outranked the estimate and the recipe — say whose it is.
+                if (write.Recalled) note = " (their own number from the last time they logged it)";
                 return ($"Logged {entry.Food} for {MealJournal.SlotName(entry.Slot)} on {entry.EatenOn:yyyy-MM-dd}: {kcal}{note}"
                     + (entry.CaloriesEstimated ? " — an estimate, which they can correct on the Journal page." : "."), false);
             }
@@ -998,9 +1018,9 @@ public class AnthropicPantryChat : IPantryChat
                 "Record ONE food the user says they ate in their personal meal journal. Call once per distinct food ('two eggs and toast for breakfast' = two calls). Eating is NOT an inventory statement: never record_signal, set_quantity or add_purchase because someone ate something.",
                 """
                 {
-                  "food": { "type": "string", "description": "What was eaten, with the portion as they said it (e.g. '2 scrambled eggs', 'turkey sandwich')." },
+                  "food": { "type": "string", "description": "What was eaten, with the portion as they said it (e.g. '2 scrambled eggs', 'turkey sandwich'). For a drink or a chain's menu item, include the size you priced (e.g. '7 Brew Blondie, medium 24 oz') so they can see it. If it is one of the foods listed with their own calorie number, use that name exactly." },
                   "meal": { "type": "string", "enum": ["Breakfast","Lunch","Dinner","Snack"], "description": "The meal they name; if they don't name one, infer it from their words or the time now." },
-                  "calories": { "type": "integer", "description": "Calories for the portion eaten: the number they stated, or else your best estimate for that portion (assume one typical serving when no portion is given). Omit only if you genuinely cannot estimate." },
+                  "calories": { "type": "integer", "description": "Calories for the portion eaten: the number they stated, or else your best estimate for that portion (assume one typical serving when no portion is given — for a named chain, that chain's own regular size and recipe, not a generic cup). Omit only if you genuinely cannot estimate." },
                   "calories_stated": { "type": "boolean", "description": "true ONLY when the user said the calorie number themselves. Default false (an estimate)." },
                   "date": { "type": "string", "description": "YYYY-MM-DD when they ate it, if not today ('yesterday', 'Tuesday'). Omit for today." },
                   "recipe_name": { "type": "string", "description": "If the food is one of their SAVED recipes, its name — the recipe's own calorie figure is then used." },

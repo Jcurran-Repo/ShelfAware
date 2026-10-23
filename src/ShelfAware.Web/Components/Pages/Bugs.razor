@@ -38,8 +38,8 @@ else
             </label>
             <label class="field">
                 <span>Where (which page)</span>
-                @* Built from SiteNav — the SAME list the header nav renders, so the choices can't
-                   drift from the app's real pages and nobody has to type "/list" by hand. The
+                @* Built from SiteNav — the SAME pages the menu and its tab strips render, so the choices
+                   can't drift from the app's real pages and nobody has to type "/list" by hand. The
                    escape hatch keeps the old free text for anywhere more specific. *@
                 <select @bind="wherePage" disabled="@busy" aria-label="Which page it happened on">
                     <option value="">—</option>

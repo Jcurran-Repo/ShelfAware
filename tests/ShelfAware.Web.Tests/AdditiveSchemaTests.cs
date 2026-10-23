@@ -193,6 +193,31 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Backfills_when_a_journal_number_was_given_from_when_it_was_logged_on_a_pre_override_db()
+    {
+        await using var db = _db.CreateDbContext();
+        var loggedAt = new DateTimeOffset(new DateTime(2026, 10, 20, 8, 15, 0), TimeSpan.Zero);
+        db.JournalEntries.Add(new JournalEntry { Food = "Own", Calories = 480, EatenOn = new DateOnly(2026, 10, 20), LoggedAt = loggedAt });
+        db.JournalEntries.Add(new JournalEntry { Food = "Estimate", Calories = 240, CaloriesEstimated = true, EatenOn = new DateOnly(2026, 10, 20), LoggedAt = loggedAt });
+        db.JournalEntries.Add(new JournalEntry { Food = "Blank", EatenOn = new DateOnly(2026, 10, 20), LoggedAt = loggedAt });
+        await db.SaveChangesAsync();
+        var fresh = await ColumnTypesAsync(db, "JournalEntries");
+
+        // A box that ran the journal before overrides were remembered: the ALTER path a live deployment takes.
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE JournalEntries DROP COLUMN CaloriesGivenAt;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // second boot — idempotent, and must NOT re-run the backfill
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "JournalEntries"));
+        await using var read = _db.CreateDbContext();
+        var rows = await read.JournalEntries.AsNoTracking().OrderBy(e => e.Food).ToListAsync();
+        // Only a number that is the person's own was ever "given"; an estimate or a blank stays unstamped.
+        Assert.Equal([("Blank", (DateTimeOffset?)null), ("Estimate", null), ("Own", loggedAt)],
+            rows.Select(e => (e.Food, e.CaloriesGivenAt)));
+    }
+
+    [Fact]
     public async Task Creates_the_SavedReports_table_on_an_older_db_with_the_fresh_schema()
     {
         await using var db = _db.CreateDbContext();

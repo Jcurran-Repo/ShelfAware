@@ -40,10 +40,7 @@
     {
         get
         {
-            var relative = "/" + Nav.ToBaseRelativePath(Nav.Uri);
-            var query = relative.IndexOf('?');
-            if (query >= 0) relative = relative[..query];
-            return $"/bugs?from={Uri.EscapeDataString(relative)}";
+            return $"/bugs?from={Uri.EscapeDataString(SiteNav.PathOf(Nav, Nav.Uri))}";
         }
     }
 

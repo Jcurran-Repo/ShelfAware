@@ -79,20 +79,22 @@ to a constant — Stryker rewrites the expression into a ternary, which is not o
 *"0 total mutants will be tested"* and *"unable to calculate a mutation score"*, **exited 0**, and
 the `Core mutation (changed files)` check went green on a file it had not read. **The PR gate now
 fails on this:** after Stryker exits 0 on a PR that touched Core, `mutation-pr.yml` reads the JSON
-report and fails the job when the count of mutants with a status other than `CompileError`/`Ignored`
-is zero — or when no report was written at all — naming the hole in the error. A score over nothing
-is not 100%; it is undefined, and the gate now says so instead of passing. The weekly run's score
+report and fails the job when a changed file was never tested, or when no report was written at all,
+naming the file and the reason in the error. (The first version of this guard fired only when the
+whole report tested nothing; the two notes below say how it got to the per-file rule that stands.)
+A score over nothing is not 100%; it is undefined, and the gate now says so instead of passing. The weekly run's score
 publisher applies the same refusal in the other direction: a report with nothing testable leaves the
 last real number standing rather than overwriting it.
 
-⚠️ **Narrowed 2026-10-23, with Jordan's approval: "zero testable" alone is not the hole.** A diff-scoped
+⚠️ **Narrowed 2026-10-23, with Jordan's approval: "zero testable" alone is not the hole.** (History:
+the per-file note after this one replaced the rule this list describes.) A diff-scoped
 report keeps the baseline's compile errors Core-wide (~590 of them, in files nobody touched): `--since`
 Ignores out-of-diff mutants but leaves those as CompileError. So zero testable is also exactly what a
 PR looks like when its Core change produces no mutants at all, such as a new enum member or an
 interface signature change. PRs #91 and #93 were both held red on that and nothing else. A
-zero-testable run now passes on exactly one proof: every path the scope step listed is a Core `.cs`
-file that appears in the report exactly once with **zero mutants of any status**. Anything else still
-fails:
+zero-testable run then passed on exactly one proof: every path the scope step listed is a Core `.cs`
+file that appears in the report exactly once with **zero mutants of any status**. Anything else
+failed:
 - a changed Core test;
 - a `.csproj` or other non-C# file;
 - a deleted file;
@@ -102,6 +104,26 @@ fails:
 
 The scope step writes that one list of changed paths, and the guard reads it rather than asking git
 again with its own pathspec. Each failure shape was checked with a probe commit against a real report.
+
+⚠️ **Made per-file, 2026-10-23: the hole was never "the whole report tested nothing".** A mutation score
+is pooled across files, so a PR touching two Core files, one with killed mutants and one whose mutants
+all failed to compile, scored 100% and passed: the WaveAudio shape, hidden behind a neighbour. The
+guard now proves every changed Core source file on **every** run, not only when the report tested
+nothing. Each one still on disk must be in the report exactly once and either have at least one tested
+mutant or have no mutants at all. A file whose every mutant is CompileError or Ignored fails, whatever
+the rest of the PR did. Baseline compile errors in files the PR did not touch are not judged, and a
+file with some CompileError mutants beside tested ones passes, since that is ordinary Stryker output.
+The other changed paths (a Core test, a `.csproj`, a deleted file) have no mutants of their own, so
+they are proven by the run having tested something. With zero testable mutants report-wide they fail
+as before. A path git C-quotes (a quote, backslash or control character in the name) can't be matched to
+a file, so it fails rather than slipping through as "not Core". The step's one `tested` definition
+serves both the report-wide count and the per-file proof.
+
+The limit that remains is depth, not reach: one tested mutant clears a file, so a file that is
+mostly CompileError beside a single killed mutant still passes. That is the rollback sweep described
+above, and rule 4 of the adversarial review is the check for it. A per-file floor would need a
+baseline to compare against, which a diff-scoped run doesn't have. No Core file today has every
+mutant in CompileError (checked against the 2026-10-23 report), so this rule blocks no existing file.
 
 ## Scope-tuning outcome (2026-08-25): nothing honest to exclude
 

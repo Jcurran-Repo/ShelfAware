@@ -16,8 +16,11 @@ public class ProductRenameService(IHouseholdDbFactory dbFactory, IActivityLog ac
     public sealed record Result(bool Ok, string Message, int RelinkedIngredients = 0);
 
     /// <summary>The result of a rename staged on a context: whether it applied, the message, the name it
-    /// replaced (for the undo record), and how many recipe links it re-pointed.</summary>
-    public sealed record RenameOutcome(bool Ok, string Message, string OldName = "", int RelinkedIngredients = 0);
+    /// replaced (for the undo record), how many recipe links it re-pointed, and — when it was refused because
+    /// another product already has that identity — that product's name, so a caller with its own framing (the
+    /// merge) can word the refusal for its own action.</summary>
+    public sealed record RenameOutcome(
+        bool Ok, string Message, string OldName = "", int RelinkedIngredients = 0, string? TakenBy = null);
 
     public async Task<Result> RenameAsync(int productId, string newName, CancellationToken cancellationToken = default)
     {
@@ -73,7 +76,8 @@ public class ProductRenameService(IHouseholdDbFactory dbFactory, IActivityLog ac
         // into SaveChanges' change-tracker diff for no reason.
         var others = await db.Products.AsNoTracking().Where(p => p.Id != productId).ToListAsync(cancellationToken);
         if (ProductMatcher.ExactMatches(name, others) is { Count: > 0 } taken)
-            return new(false, $"\"{taken[0].Name}\" already exists — pick a different name (renames can't merge products).");
+            return new(false, $"\"{taken[0].Name}\" already exists — pick a different name (renames can't merge products).",
+                TakenBy: taken[0].Name);
 
         var oldName = product.Name;
         product.Name = name;

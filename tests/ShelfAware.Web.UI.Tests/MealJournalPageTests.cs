@@ -167,6 +167,41 @@ public class MealJournalPageTests : PageTestContext
     }
 
     [Fact]
+    public void A_corrected_number_says_it_will_be_used_next_time_and_is()
+    {
+        Seed("7 Brew Blondie", 240, estimated: true, slot: MealSlot.Snack);
+        var cut = RenderPage();
+
+        cut.Find(".journal-item button[aria-label='Edit 7 Brew Blondie']").Click();
+        cut.Find(".journal-item input[type=number]").Change("480");
+        cut.Find(".journal-item form").Submit();
+        cut.WaitForAssertion(() => Assert.Contains("Next time you log 7 Brew Blondie, it'll be 480 kcal.",
+            cut.Find(".journal-day [role=status]").TextContent));
+
+        cut.Find(".journal-add input[aria-label='Food to add']").Change("7 brew blondie");
+        cut.Find(".journal-add").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("at 480 kcal, your number from last time.",
+            cut.Find(".journal-day [role=status]").TextContent));
+        Assert.Equal((480, false), (Stored()[^1].Calories, Stored()[^1].CaloriesEstimated));
+    }
+
+    [Fact]
+    public void An_undo_puts_back_the_estimate_it_removed_not_a_remembered_number()
+    {
+        Seed("Eggs", 150, slot: MealSlot.Breakfast, on: Today.AddDays(-1));
+        Seed("Eggs", 200, estimated: true, slot: MealSlot.Breakfast);
+        var cut = RenderPage();
+
+        cut.Find(".journal-item button[aria-label='Remove Eggs']").Click();
+        cut.WaitForAssertion(() => Assert.Contains("Removed Eggs.", cut.Find(".journal-day [role=status]").TextContent));
+        cut.FindAll(".journal-day [role=status] button").Single(b => b.TextContent.Contains("Undo")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Put Eggs back.", cut.Find(".journal-day [role=status]").TextContent));
+        Assert.Equal((200, true), (Stored()[^1].Calories, Stored()[^1].CaloriesEstimated));
+    }
+
+    [Fact]
     public void Days_that_have_not_happened_cannot_be_opened_and_the_month_cannot_run_ahead()
     {
         var cut = RenderPage();
