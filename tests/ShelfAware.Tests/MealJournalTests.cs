@@ -553,6 +553,9 @@ public class MealJournalTests
         Assert.Equal("7 brew chiller", MealJournal.SizelessKey("7 brew chiller 16oz"));
         Assert.Equal("7 brew chiller", MealJournal.SizelessKey("7 Brew chiller, small kids medium regular tall grande venti extra xl kid 12 oz"));
         Assert.NotEqual(MealJournal.SizelessKey("chiller 16 oz"), MealJournal.SizelessKey("mocha 32 oz"));
+        // What comes out leaves a space, so the words either side of it stay two words.
+        Assert.Equal("mocha chiller", MealJournal.SizelessKey("mocha,chiller"));
+        Assert.Equal("mocha chiller", MealJournal.SizelessKey("mocha,16oz,chiller"));
     }
 
     [Fact]

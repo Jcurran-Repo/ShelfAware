@@ -218,11 +218,15 @@ public static class MealJournal
             : $"{food.Trim()}, {Flatten(portion)}";
     }
 
-    private static readonly Regex OuncesPattern = new(
-        @"(\d+(?:\.\d+)?)\s*(?:fl\.?\s*)?(?:oz|ounces?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private const string OuncesText = @"(\d+(?:\.\d+)?)\s*(?:fl\.?\s*)?(?:oz|ounces?)\b";
 
-    private static readonly Regex SizeWords = new(
-        @"\b(?:small|medium|large|regular|kids?|tall|grande|venti|extra|xl)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex OuncesPattern = new(OuncesText, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>Everything that says a size rather than a food — an ounce count, a size word — plus the commas
+    /// that separate them from the name, each replaced by a space so the words either side stay apart.</summary>
+    private static readonly Regex SizeNoise = new(
+        OuncesText + @"|\b(?:small|medium|large|regular|kids?|tall|grande|venti|extra|xl)\b|,",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     /// <summary>The size a food's name states in ounces ("…, large 32 oz" → 32), or null when it states none.</summary>
     public static decimal? Ounces(string food) =>
@@ -232,8 +236,7 @@ public static class MealJournal
 
     /// <summary>The food with its size taken out — what two sizes of the same drink share
     /// ("7 Brew chiller, large 32 oz" and "7 brew chiller 16 oz" are both "7 brew chiller").</summary>
-    public static string SizelessKey(string food) =>
-        FoodKey(SizeWords.Replace(OuncesPattern.Replace(food, " "), " ").Replace(',', ' '));
+    public static string SizelessKey(string food) => FoodKey(SizeNoise.Replace(food, " "));
 
     /// <summary>An already-logged size of the same food that makes <paramref name="draft"/>'s estimate
     /// impossible — a bigger cup priced lower than a smaller one, or a smaller cup priced higher — or null.
@@ -246,13 +249,20 @@ public static class MealJournal
         return history
             .Where(e => e.Calories is not null && Ounces(e.Food) is { } other && other != oz && SizelessKey(e.Food) == key)
             .OrderByDescending(e => e.Id)
-            .FirstOrDefault(e => Ounces(e.Food) > oz ? e.Calories < kcal : e.Calories > kcal);
+            .FirstOrDefault(Impossible);
+
+        bool Impossible(JournalEntry e)
+        {
+            // Stryker disable once Equality: equal sizes are filtered out above, so > and >= agree here.
+            return Ounces(e.Food) > oz ? e.Calories < kcal : e.Calories > kcal;
+        }
     }
 
     /// <summary>What a write that <see cref="SizeConflict"/> refused says — to the model, which estimated it, so
     /// it names both numbers and asks for a new estimate rather than a retry of the same one.</summary>
     public static string SizeConflictProblem(JournalDraft draft, JournalEntry other)
     {
+        // Stryker disable once Equality: SizeConflict never pairs equal sizes, so > and >= agree here.
         var bigger = Ounces(draft.Food) > Ounces(other.Food);
         return $"Not logged: {Number(draft.Calories!.Value)} calories for {draft.Food} is {(bigger ? "less" : "more")} than the "
             + $"{Number(other.Calories!.Value)} already logged for {other.Food} — a {(bigger ? "bigger" : "smaller")} size can't have "
