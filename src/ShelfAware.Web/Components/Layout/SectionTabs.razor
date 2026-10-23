@@ -1,0 +1,37 @@
+@implements IDisposable
+@inject NavigationManager Nav
+
+@* The tab strip for a menu section with more than one page. Each tab is a real page with its own URL
+   (so voice "go to", the guided tour and bookmarks keep working), which makes these navigation links
+   marked with aria-current rather than an ARIA tablist: the keyboard model of role="tab" promises
+   arrow-key switching within one page, and these move between pages. *@
+@* Not named `section`: like `page`, that is a Razor directive keyword, so it stays out of inline @-expressions. *@
+@if (current is { Pages.Count: > 1 })
+{
+    <nav class="section-tabs" aria-label="@current.Label">
+        @foreach (var entry in current.Pages)
+        {
+            <SiteNavLink Page="@entry" />
+        }
+    </nav>
+}
+
+@code {
+    private SiteNav.Section? current;
+
+    protected override void OnInitialized()
+    {
+        current = SiteNav.SectionAt(SiteNav.PathOf(Nav, Nav.Uri));
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        var next = SiteNav.SectionAt(SiteNav.PathOf(Nav, e.Location));
+        if (next == current) return;
+        current = next;
+        _ = InvokeAsync(StateHasChanged); // see SiteNavLink: a render failure still reaches the renderer
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}

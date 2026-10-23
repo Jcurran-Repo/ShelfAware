@@ -1,0 +1,32 @@
+@implements IDisposable
+@inject NavigationManager Nav
+
+@* A link to one SiteNav page, lit while the visitor is on it. The rail and the section tab strip both
+   use it, and it asks SiteNav.IsAt, the same rule SectionTabs uses to pick its section, so the rail,
+   the tabs and the strip itself always agree on where the visitor is. *@
+<a href="@Page.Href" class="@(Active ? "active" : null)" aria-current="@(Active ? "page" : null)">@Page.Label</a>
+
+@code {
+    [Parameter, EditorRequired] public SiteNav.Page Page { get; set; } = default!;
+
+    private string path = "/";
+
+    private bool Active => SiteNav.IsAt(Page, path);
+
+    protected override void OnInitialized()
+    {
+        path = SiteNav.PathOf(Nav, Nav.Uri);
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    // A render failure still reaches the renderer's own error handling (it logs and ends the circuit);
+    // the discarded task only carries the hop onto the renderer's thread.
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        var before = Active;
+        path = SiteNav.PathOf(Nav, e.Location);
+        if (Active != before) _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}
