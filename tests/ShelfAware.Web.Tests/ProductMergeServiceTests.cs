@@ -394,4 +394,178 @@ public class ProductMergeServiceTests : IDisposable
         Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
         Assert.Equal(UndoOutcome.AlreadyUndone, await _log.PeekAsync(entryId)); // spent now
     }
+
+    // ---- rename on merge: the lookalike card's "neither name — call it this" ----
+
+    private async Task<string> LatestSummary()
+    {
+        await using var db = _db.CreateDbContext();
+        return (await db.ActivityEntries.OrderByDescending(e => e.Id).FirstAsync()).Summary;
+    }
+
+    [Fact]
+    public async Task Merge_with_a_new_name_renames_the_survivor_and_follows_the_recipe_links()
+    {
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+
+        var result = await _service.MergeAsync(sourceId, targetId, renameTo: "  Powdered Drink Mix ");
+
+        Assert.True(result.Ok);
+        Assert.Equal("Merged Strawberry Drink Mix and Drink Mix as Powdered Drink Mix", await LatestSummary());
+        Assert.Equal(await LatestSummary(), result.Summary); // the notice's line IS the history line
+        await using var db = _db.CreateDbContext();
+        Assert.Null(await db.Products.FirstOrDefaultAsync(p => p.Id == sourceId));
+        Assert.Equal("Powdered Drink Mix", (await db.Products.SingleAsync(p => p.Id == targetId)).Name);
+        Assert.Equal(3, await db.PurchaseEvents.CountAsync(p => p.ProductId == targetId));
+        // The source's recipe link followed it to the target, then the rename carried it to the new name.
+        Assert.Equal("Powdered Drink Mix", (await db.RecipeIngredients.SingleAsync()).MatchedProduct);
+    }
+
+    [Fact]
+    public async Task Merge_may_take_the_source_names_identity_as_the_new_name()
+    {
+        // ⚠️ The source is going away, so a cleaned-up spelling of ITS name must not be refused as "taken" —
+        // the rename's taken-check reads the products table, so the merge has to delete the source first.
+        int sourceId, targetId;
+        await using (var seed = _db.CreateDbContext())
+        {
+            var source = new Product { Name = "brioche bread" };
+            var target = new Product { Name = "Brioche Bread Loaf" };
+            seed.Products.AddRange(source, target);
+            await seed.SaveChangesAsync();
+            (sourceId, targetId) = (source.Id, target.Id);
+        }
+
+        var result = await _service.MergeAsync(sourceId, targetId, renameTo: "Brioche Bread");
+
+        Assert.True(result.Ok, result.Message);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Brioche Bread", (await db.Products.SingleAsync()).Name);
+    }
+
+    [Fact]
+    public async Task A_refused_new_name_rolls_the_whole_merge_back()
+    {
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+        await using (var seed = _db.CreateDbContext())
+        {
+            seed.Products.Add(new Product { Name = "Lemonade" });
+            await seed.SaveChangesAsync();
+        }
+
+        var result = await _service.MergeAsync(sourceId, targetId, "Strawberry", renameTo: "lemonade");
+
+        Assert.False(result.Ok);
+        // Worded for a merge — not the rename's "(renames can't merge products)", mid-merge.
+        Assert.Equal("\"Lemonade\" is already another product — pick a different name, or merge with it from its own page.", result.Message);
+        await using var db = _db.CreateDbContext();
+        // Nothing half-done: the source and its history are where they were, the target kept its name, the
+        // link still names the source, and no history entry claims a merge that didn't happen.
+        Assert.Equal(2, await db.PurchaseEvents.CountAsync(p => p.ProductId == sourceId));
+        Assert.All(await db.PurchaseEvents.Where(p => p.ProductId == sourceId).ToListAsync(), p => Assert.Null(p.Variety));
+        Assert.Equal("Drink Mix", (await db.Products.SingleAsync(p => p.Id == targetId)).Name);
+        Assert.Equal("strawberry drink mix", (await db.RecipeIngredients.SingleAsync()).MatchedProduct);
+        Assert.Empty(await db.ActivityEntries.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("Drink Mix")] // the target's own name — nothing to rename
+    public async Task A_blank_or_unchanged_new_name_is_a_plain_merge(string renameTo)
+    {
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+
+        Assert.True((await _service.MergeAsync(sourceId, targetId, renameTo: renameTo)).Ok);
+
+        Assert.Equal("Merged Strawberry Drink Mix into Drink Mix", await LatestSummary());
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Drink Mix", (await db.Products.SingleAsync(p => p.Id == targetId)).Name);
+    }
+
+    [Fact]
+    public async Task Undo_of_a_renaming_merge_restores_both_products_and_both_names()
+    {
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+        await _service.MergeAsync(sourceId, targetId, "Strawberry", renameTo: "Powdered Drink Mix");
+        var entryId = await LatestMergeEntryId();
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Drink Mix", (await db.Products.SingleAsync(p => p.Id == targetId)).Name);
+        var source = await db.Products.SingleAsync(p => p.Name == "Strawberry Drink Mix");
+        Assert.Equal(2, await db.PurchaseEvents.CountAsync(p => p.ProductId == source.Id));
+        Assert.Equal(1, await db.PurchaseEvents.CountAsync(p => p.ProductId == targetId));
+        // The link went new name → old target name (rename back) → source (un-merge).
+        Assert.Equal("Strawberry Drink Mix", (await db.RecipeIngredients.SingleAsync()).MatchedProduct);
+    }
+
+    [Fact]
+    public async Task Undo_of_a_renaming_merge_keeps_a_name_the_user_changed_since()
+    {
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+        await _service.MergeAsync(sourceId, targetId, renameTo: "Powdered Drink Mix");
+        var entryId = await LatestMergeEntryId();
+        Assert.True((await new ProductRenameService(_db, _log).RenameAsync(targetId, "Kool-Aid")).Ok);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Kool-Aid", (await db.Products.SingleAsync(p => p.Id == targetId)).Name); // theirs wins
+        Assert.NotNull(await db.Products.FirstOrDefaultAsync(p => p.Name == "Strawberry Drink Mix")); // still un-merged
+    }
+
+    [Fact]
+    public async Task Undo_of_a_renaming_merge_refuses_when_the_old_name_was_taken_since()
+    {
+        // The merge freed "Drink Mix"; something else took it. Un-merging anyway would leave the survivor on
+        // the merge's name while /history said the merge was undone — so the undo refuses, whole.
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+        await _service.MergeAsync(sourceId, targetId, renameTo: "Powdered Drink Mix");
+        var entryId = await LatestMergeEntryId();
+        await using (var seed = _db.CreateDbContext())
+        {
+            seed.Products.Add(new Product { Name = "Drink Mix" });
+            await seed.SaveChangesAsync();
+        }
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entryId));
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Powdered Drink Mix", (await db.Products.SingleAsync(p => p.Id == targetId)).Name);
+        Assert.Null(await db.Products.FirstOrDefaultAsync(p => p.Name == "Strawberry Drink Mix")); // nothing half-undone
+        Assert.Equal(3, await db.PurchaseEvents.CountAsync(p => p.ProductId == targetId));
+    }
+
+    [Fact]
+    public async Task Undo_of_a_merge_that_took_the_source_names_identity_restores_both()
+    {
+        int sourceId, targetId;
+        await using (var seed = _db.CreateDbContext())
+        {
+            var source = new Product { Name = "brioche bread", Purchases = [new PurchaseEvent { PurchasedAt = new DateOnly(2026, 6, 1) }] };
+            var target = new Product { Name = "Brioche Bread Loaf" };
+            seed.Products.AddRange(source, target);
+            await seed.SaveChangesAsync();
+            (sourceId, targetId) = (source.Id, target.Id);
+        }
+        await _service.MergeAsync(sourceId, targetId, renameTo: "Brioche Bread");
+        var entryId = await LatestMergeEntryId();
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Brioche Bread Loaf", (await db.Products.SingleAsync(p => p.Id == targetId)).Name);
+        var revived = await db.Products.SingleAsync(p => p.Name == "brioche bread");
+        Assert.Equal(1, await db.PurchaseEvents.CountAsync(p => p.ProductId == revived.Id));
+    }
+
+    [Theory]
+    [InlineData("Artesano Brioche Bread", "Brioche Bread Loaf", "Brioche Bread")]
+    [InlineData("Gala Apples", "Apple Gala Pack", "Gala")] // longest CONSECUTIVE run, not shared words in any order
+    [InlineData("Sharp Cheddar Cheese", "Cheddar Cheeses", "Cheddar Cheese")] // plural fold; first name's spelling
+    [InlineData("Hand Soap", "Cat Litter", null)]
+    public void Suggests_the_shared_name_from_the_longest_common_run(string first, string second, string? expected) =>
+        Assert.Equal(expected, ProductMergeService.SuggestSharedName(first, second));
 }

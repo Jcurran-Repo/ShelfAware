@@ -11,7 +11,10 @@ namespace ShelfAware.Web.Undo;
 /// (dropping the duplicates), re-points name-keyed recipe links, flips the target's tracked flag / unit, and
 /// DELETES the source — so once it runs, nothing on the survivor distinguishes the moved rows from its own.
 /// This manifest, captured before the fold, is what lets the undo pull exactly the source's contribution
-/// back out and rebuild the deleted product; without it, merge could only ever be history-only.</summary>
+/// back out and rebuild the deleted product; without it, merge could only ever be history-only.
+/// <para><see cref="TargetName"/> is the survivor's name AFTER the merge. When the merge also renamed it,
+/// <see cref="TargetNameBefore"/> holds the name it had going in; null means no rename (and is what every
+/// entry recorded before rename-on-merge existed deserializes to).</para></summary>
 public sealed record ProductsMergedPayload(
     string SourceName,
     string TargetName,
@@ -29,7 +32,8 @@ public sealed record ProductsMergedPayload(
     bool TargetTrackedBefore,
     bool TargetTrackedAfter,
     string? TargetUnitBefore,
-    string? TargetUnitAfter);
+    string? TargetUnitAfter,
+    string? TargetNameBefore = null);
 
 /// <summary>Everything needed to recreate the deleted source product as a fresh row (a NEW id — the old one
 /// is dead). Its name rides on <see cref="ProductsMergedPayload.SourceName"/> (also used for the summary and
@@ -65,7 +69,9 @@ public sealed class ProductsMergedHandler : UndoHandler<ProductsMergedPayload>
 {
     public override ActivityKind Kind => ActivityKind.ProductsMerged;
 
-    protected override string Summarize(ProductsMergedPayload p) => $"Merged {p.SourceName} into {p.TargetName}";
+    protected override string Summarize(ProductsMergedPayload p) => p.TargetNameBefore is { } before
+        ? $"Merged {p.SourceName} and {before} as {p.TargetName}"
+        : $"Merged {p.SourceName} into {p.TargetName}";
 
     protected override async Task<UndoResult> Reverse(
         ShelfAwareDbContext db, ProductsMergedPayload p, ActivityEntry entry, CancellationToken ct)
@@ -143,6 +149,18 @@ public sealed class ProductsMergedHandler : UndoHandler<ProductsMergedPayload>
         {
             var targetSubs = await db.ProductSubstitutes.Where(s => s.ProductId == target.Id).ToListAsync(ct);
             db.ProductSubstitutes.RemoveRange(targetSubs.Where(s => addedSubs.Contains(s.Value)));
+        }
+
+        // A merge that renamed the survivor gives it its old name back first — through the SAME RenameOnAsync
+        // the forward merge used, so the recipe links follow the name back and the taken-check still guards.
+        // Only if nobody has renamed it since (theirs wins, like the tracked flag below). A REFUSED rename-back
+        // (another product has taken the old name since) refuses the whole undo: reporting Done over a
+        // survivor still wearing the merge's name would claim a restore that didn't happen. Runs before the
+        // link step below, which keys on the target's CURRENT name.
+        if (p.TargetNameBefore is { } nameBefore && string.Equals(target.Name, p.TargetName, StringComparison.Ordinal))
+        {
+            var renamedBack = await ProductRenameService.RenameOnAsync(db, target.Id, nameBefore, ct);
+            if (!renamedBack.Ok) return UndoResult.Superseded;
         }
 
         // Re-point the recipe links the merge moved, back to the source's name — but only the ones still
