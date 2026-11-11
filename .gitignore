@@ -496,6 +496,11 @@ tests/ShelfAware.Evals/fixtures/*.gif
 # Claude Code review-agent worktrees (session scratch, never part of the repo)
 .claude/worktrees/
 
+# Claude Code per-machine permission approvals ("don't ask again"). Shared rules
+# live in .claude/settings.json; this file is one person's machine and can hold
+# paths or commands that should never be published.
+.claude/settings.local.json
+
 # Stryker.NET mutation-testing output (HTML reports + logs, regenerated per run).
 # The score history is tracked in docs/mutation-testing.md, not by committing these.
 **/StrykerOutput/
